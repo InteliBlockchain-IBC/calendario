@@ -1,0 +1,48 @@
+import { notFound } from 'next/navigation'
+import { prisma } from '@/lib/db'
+import { loadCalendarBySlug } from '@/lib/public/load-calendar'
+import { toPublicEvent } from '@/lib/public/serialize'
+
+export default async function EventPage({
+  params,
+}: {
+  params: Promise<{ slug: string; id: string }>
+}) {
+  const { slug, id } = await params
+  const calendar = await loadCalendarBySlug(slug)
+
+  const row = await prisma.event.findFirst({
+    where: { id, calendarId: calendar.id, isPublic: true, status: 'CONFIRMED' },
+  })
+  if (!row) notFound()
+
+  const event = toPublicEvent(row)
+  const formatter = new Intl.DateTimeFormat('pt-BR', {
+    dateStyle: 'full',
+    timeStyle: event.allDay ? undefined : 'short',
+    timeZone: calendar.timezone,
+  })
+
+  return (
+    <main className="mx-auto max-w-2xl space-y-6 p-6">
+      {event.imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={event.imageUrl} alt="" className="w-full rounded-xl" />
+      )}
+      <header className="space-y-1">
+        <h1 className="text-2xl font-semibold">{event.title}</h1>
+        <p className="opacity-70">{formatter.format(new Date(event.startsAt))}</p>
+        {event.location && <p className="opacity-70">{event.location}</p>}
+      </header>
+      {event.description && <p className="whitespace-pre-wrap">{event.description}</p>}
+      {event.signupUrl && (
+        <a
+          href={event.signupUrl}
+          className="inline-block rounded-lg bg-neutral-900 px-4 py-2 text-white"
+        >
+          Inscreva-se
+        </a>
+      )}
+    </main>
+  )
+}
