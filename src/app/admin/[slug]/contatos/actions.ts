@@ -21,19 +21,32 @@ export async function saveContact(
     ),
   )
 
-  await prisma.contact.upsert({
-    where: { calendarId_email: { calendarId: calendar.id, email: input.email } },
-    create: {
-      calendarId: calendar.id,
-      email: input.email,
-      name: input.name,
-      groups: { connect: groups.map((g) => ({ id: g.id })) },
-    },
-    update: {
-      name: input.name,
-      groups: { set: groups.map((g) => ({ id: g.id })) },
-    },
-  })
+  if (input.id) {
+    // Edição de contato existente: escopado por calendarId, nunca só por id.
+    await prisma.contact.update({
+      where: { id: input.id, calendarId: calendar.id },
+      data: {
+        name: input.name,
+        email: input.email,
+        groups: { set: groups.map((g) => ({ id: g.id })) },
+      },
+    })
+  } else {
+    // Contato nasce do uso: e-mail digitado num evento, sem id ainda.
+    await prisma.contact.upsert({
+      where: { calendarId_email: { calendarId: calendar.id, email: input.email } },
+      create: {
+        calendarId: calendar.id,
+        email: input.email,
+        name: input.name,
+        groups: { connect: groups.map((g) => ({ id: g.id })) },
+      },
+      update: {
+        name: input.name,
+        groups: { set: groups.map((g) => ({ id: g.id })) },
+      },
+    })
+  }
 
   revalidatePath(`/admin/${slug}/contatos`)
 }
