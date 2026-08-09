@@ -84,64 +84,44 @@ App **Next.js único** (App Router, full-stack), sem backend separado — o sist
 | Auth | Auth.js (NextAuth v5) com provider Google |
 | API do Google | `googleapis` (Calendar API v3) |
 | Geração de .ics | pacote `ics` |
-| Hospedagem do app | Vercel |
-| Banco | Postgres da VPS (EasyPanel) **atrás de PgBouncer** |
-| Imagens | Vercel Blob |
+| Hospedagem do app | Container Docker no **EasyPanel** da VPS, via GHCR |
+| Banco | Postgres no mesmo EasyPanel, rede interna, **conexão direta** |
+| Imagens | Volume montado no container |
 | Disparo do sync | Sob demanda, na leitura, via `after()` do Next.js |
+
+Mesma infraestrutura do `gestao_pessoas`: GitHub Actions builda a imagem, publica no GHCR e chama o webhook de deploy do EasyPanel.
 
 **Por que sync sob demanda e não cron:** um cron externo (GitHub Actions, Vercel Cron) é uma dependência de runtime morando fora do serviço — quem quisesse subir esta plataforma precisaria configurar agendamento à parte para a agenda simplesmente funcionar. Contradiz "plataforma independente". Pior, um cron único que varre todos os calendários é justamente a peça que não sobrevive a multi-inquilino. O disparo por leitura elimina a infra externa, e o sync passa a acontecer por calendário, proporcional ao uso de cada um. Detalhe em §6.2.
 
 *(Vercel Cron também não serviria pelo lado prático: no plano Hobby executa no máximo uma vez por dia.)*
 
-### 4.1 Pooling de conexão — obrigatório, não otimização
+### 4.1 Container, e por que não há pooler
 
-Função serverless abre uma conexão por invocação. Com `max_connections` no padrão de 100, algumas centenas de requisições concorrentes esgotam o Postgres e o app passa a dar erro de conexão sem aviso prévio. **É o gargalo real do sistema** — chega muito antes de qualquer limite da API do Google (§6.6), que só aparece na casa dos milhares de inquilinos.
+O app roda como **container de processo longo**, não como função serverless. Isso resolve por construção o que seria o maior problema de infraestrutura do projeto.
 
-PgBouncer entra entre a aplicação e o banco: aceita milhares de conexões de clientes e as multiplexa sobre um punhado de conexões reais.
+Em serverless, cada invocação abre a própria conexão com o Postgres; com `max_connections` no padrão de 100, algumas centenas de requisições concorrentes esgotam o banco e o app passa a errar sem aviso. A correção exigiria PgBouncer entre app e banco, o banco exposto publicamente com TLS (a Vercel não dá IP fixo para restringir) e duas URLs no Prisma, uma delas com `?pgbouncer=true` — cuja ausência gera erro intermitente de *prepared statement* que só aparece sob carga.
 
-**No EasyPanel:** um App com a imagem `edoburu/pgbouncer` no mesmo projeto do Postgres, alcançando-o pelo nome do serviço na rede interna.
+Nada disso existe aqui. Um processo Node longo mantém um pool estável, e o Prisma já o administra. A conexão é **direta, pela rede interna da VPS**, sem pooler e sem `sslmode` — exatamente o que o `gestao_pessoas` faz hoje.
 
-| Variável | Valor |
-|---|---|
-| `DB_HOST` / `DB_PORT` | serviço do Postgres, `5432` |
-| `DB_USER` / `DB_PASSWORD` | credenciais do banco do calendário |
-| `POOL_MODE` | `transaction` |
-| `MAX_CLIENT_CONN` | `1000` |
-| `DEFAULT_POOL_SIZE` | `20` |
-| `AUTH_TYPE` | `scram-sha-256` |
+Consequências:
 
-Escuta em `6432`, exposto publicamente **com TLS** — a Vercel chama de fora e não oferece IP fixo, então restrição por IP não é opção. Mesma postura que a VPS já tem hoje para o backend do `gestao_pessoas`.
+- Uma variável de ambiente para o banco, não duas.
+- O Postgres não precisa de porta pública.
+- Sem serviço de pooling para manter.
+- `after()` roda num processo comum, sem teto de duração de função.
 
-**Detalhe do Prisma que morde:** em `POOL_MODE=transaction` o Prisma precisa de duas URLs, porque migration usa recursos de sessão que esse modo não suporta.
+*(Quando o pooler voltaria a ser necessário: mais de uma instância do app, ou volta para hospedagem serverless. Nenhum dos dois está no horizonte, e ambos são mudança de operação, não de código.)*
 
-```prisma
-datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL")   // via PgBouncer, aplicação
-  directUrl = env("DIRECT_URL")     // direto no Postgres, migrations
-}
-```
-
-```
-DATABASE_URL="postgresql://user:senha@<host>:6432/calendario?pgbouncer=true&connection_limit=1"
-DIRECT_URL="postgresql://user:senha@<host>:5432/calendario"
-```
-
-Omitir `?pgbouncer=true` produz erro intermitente de *prepared statement* que só se manifesta sob carga — o pior tipo de bug para descobrir em produção.
-
-**Nada no código depende de qual Postgres é.** Trocar por um gerenciado com pooler embutido (Neon, Supabase) é substituir essas duas variáveis de ambiente. A decisão é de operação, não de arquitetura, e pode ser revista a qualquer momento.
-
-*(Sobre auto-hospedar o Neon: o `docker-compose` do repositório oficial é ambiente de desenvolvimento dos mantenedores — cinco serviços coordenados, sem suporte nem documentação de operação em produção. E não entregaria nada além do que PgBouncer já entrega aqui: scale-to-zero não economiza em VPS própria, e o pooler do Neon é PgBouncer por baixo.)*
+**Uploads em volume, não em blob de terceiro.** As artes dos eventos vão para um volume montado no container, servidas por uma rota do próprio app. É a opção com menos peças: nenhum serviço novo, nenhum token de terceiro. *(Teto conhecido: backup do volume é manual, junto com o do Postgres, e a solução não sobrevive a múltiplas instâncias. Storage S3-compatível é o caminho de melhoria, se algum dia qualquer um dos dois importar.)*
 
 ### 4.2 Variáveis de ambiente
 
 ```
-DATABASE_URL=              # via PgBouncer :6432, com ?pgbouncer=true&connection_limit=1
-DIRECT_URL=                # direto no Postgres :5432, usado pelas migrations
+DATABASE_URL=              # conexão direta, rede interna da VPS
 AUTH_SECRET=               # Auth.js
 AUTH_GOOGLE_ID=            # OAuth client do projeto Google Cloud do clube
 AUTH_GOOGLE_SECRET=
-BLOB_READ_WRITE_TOKEN=     # Vercel Blob
+UPLOAD_DIR=                # caminho do volume montado para as artes
 NEXT_PUBLIC_APP_URL=       # base usada no snippet de embed e no feed .ics
 ```
 
@@ -259,7 +239,7 @@ Dois blocos de campos, com donos distintos. É essa separação que faz a sincro
 | `isPublic` | boolean, default `false` | controla a aparição no site |
 | `publicTitle` | string? | sobrescreve `title` no site |
 | `publicDescription` | text? | sobrescreve `description` no site |
-| `imageUrl` | string? | arte do evento (Vercel Blob) |
+| `imageUrl` | string? | arte do evento, servida do volume (§4.1) |
 | `area` | enum `Area?` | |
 | `signupUrl` | string? | link do botão "Inscreva-se" |
 
@@ -386,7 +366,7 @@ Consumo por calendário: no teto, 144 syncs/dia (um a cada 10 min) mais o botão
 
 **O teto real de multi-inquilino** é a quota diária do projeto, porque o app OAuth é um só. Ele fica na casa dos milhares de instituições, e é ampliável mediante solicitação ao Google.
 
-**O gargalo não é o Google, é o banco.** Conexões de Postgres esgotam muito antes de qualquer quota — é o motivo do PgBouncer em §4.1. A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
+**O gargalo seria o banco, se fosse serverless.** Exaustão de conexão chega muito antes de qualquer quota do Google — e é justamente o que rodar em container elimina (§4.1). A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
 
 ### 6.7 Convidados e contatos
 
@@ -472,7 +452,7 @@ Sem dashboard, sem gráficos, sem histórico de alterações.
 - **Rotas públicas:** devolvem apenas eventos com `isPublic = true` e `status = CONFIRMED`, de um `Calendar` com `status = ACTIVE`. Calendário desligado responde 404 em todas as rotas públicas. Os filtros moram na camada de query, não na renderização.
 - **`attendees` e `Contact` nunca aparecem em rota pública.** Nem no JSON, nem na página do evento, nem no `.ics`. São dados pessoais de membros do clube, e a única razão de estarem no sistema é alimentar o convite do Google. A consulta pública seleciona campos explicitamente — nunca devolve a linha inteira do `Event`.
 - **O `.ics` é o risco silencioso.** O formato tem linha `ATTENDEE`, e gerar o arquivo "completo" a partir do evento publicaria a lista de e-mails dos membros num arquivo aberto na internet, sem nenhum erro visível. O gerador do feed monta apenas os campos públicos, e isso está em §9 como teste.
-- **Upload:** valida content-type de imagem e tamanho máximo antes de enviar ao Blob.
+- **Upload:** valida content-type de imagem e tamanho máximo antes de gravar no volume; o nome do arquivo é gerado, nunca o enviado pelo cliente.
 - **`refreshToken` em texto plano no banco.** Risco aceito conscientemente: o banco não é exposto publicamente e o token concede escrita apenas na agenda do clube. Caminho de melhoria, quando houver mais de um inquilino: criptografia em coluna com chave em env var.
 
 ## 9. Verificação
@@ -520,10 +500,72 @@ Registrado para não voltar por inércia:
 
 Cada um volta quando doer de verdade.
 
-## 11. Ordem sugerida de construção
+## 11. Repositório e fluxo de trabalho
+
+Espelha o `gestao_pessoas`, com uma diferença: lá são dois deploys (`frontend/` + `backend/`), aqui é **um app Next.js só** — não há monorepo a montar.
+
+### 11.1 Estrutura
+
+```
+calendario/
+├── CLAUDE.md                    ← regras para agentes; roteia para os docs
+├── README.md                    ← setup e comandos
+├── Dockerfile
+├── docker-compose.yml           ← Postgres local
+├── .github/workflows/deploy.yml ← build → GHCR → webhook do EasyPanel
+├── docs/
+│   ├── ARCHITECTURE.md          ← verdade versionada do sistema
+│   ├── PRODUCT.md               ← problema, decisões e o que ficou de fora
+│   ├── DEPLOY.md                ← GHCR + EasyPanel, env vars, primeiro deploy
+│   ├── DESIGN_SYSTEM.md         ← enxuto, só o que as telas usam
+│   └── superpowers/             ← gitignored: specs e planos de sessão
+├── prisma/
+│   ├── schema.prisma
+│   └── seed.ts
+└── src/
+    ├── app/                     ← (public)/, admin/, embed/, api/
+    ├── lib/                     ← google/, sync/, db
+    └── components/
+```
+
+`.gitignore` copia a convenção do `gestao_pessoas`: `docs/superpowers/`, `.claude/`, `.agents/`, `.worktrees/`, `data/` ficam fora do versionamento.
+
+### 11.2 Papel de cada documento
+
+| Doc | Responde | Muda quando |
+|---|---|---|
+| `README.md` | como rodar isto na minha máquina | comando ou dependência muda |
+| `CLAUDE.md` | como um agente deve trabalhar aqui | convenção de trabalho muda |
+| `docs/ARCHITECTURE.md` | o que o sistema é hoje: schema, rotas, sync, auth | schema, endpoint ou arquitetura muda |
+| `docs/PRODUCT.md` | por que ele é assim, e o que foi cortado de propósito | decisão de produto muda |
+| `docs/DEPLOY.md` | como colocar no ar | infra ou variável muda |
+| `docs/DESIGN_SYSTEM.md` | cor, tipografia e os poucos componentes | identidade visual muda |
+
+**A regra que importa mais**, herdada do `gestao_pessoas`: a verdade do sistema mora no `ARCHITECTURE.md`. Spec e plano são artefatos de sessão, não são versionados, e nada essencial pode viver só neles. Mudou schema, endpoint ou arquitetura? Atualiza o `ARCHITECTURE.md` na mesma PR.
+
+`PRODUCT.md` não existe no `gestao_pessoas` e é adição deliberada: separa o "por quê" do "como". É o documento que impede alguém — pessoa ou agente — de reimplementar com boa intenção algo que foi cortado de propósito (§10).
+
+`DESIGN_SYSTEM.md` é **próprio e enxuto**, não cópia dos 23 KB do `gestao_pessoas`: deriva do guia de estilos do clube, mas cobre só o que estas telas usam — cor, tipografia, card de evento, grade de mês. O outro foi escrito para telas internas de plataforma, e duplicá-lo criaria dois arquivos destinados a divergir.
+
+### 11.3 Fluxo de git
+
+`develop` é a branch padrão e alvo de todo PR. `main` é produção — push nela dispara o build e o deploy. **Nunca commitar direto em nenhuma das duas.**
+
+Trabalho de agente roda em worktree isolada, para não disputar a árvore de trabalho:
+
+```bash
+git worktree add .worktrees/<slug> -b <tipo>/<slug> develop
+```
+
+`develop` → `main` é decisão de release, não de feature. Conventional commits com descrição em português (`feat: adiciona feed .ics`).
+
+Fluxo superpowers obrigatório para feature ou fix não-trivial: `brainstorming` → spec → `writing-plans` → plano → execução. Pular só para typo, ajuste óbvio em um arquivo, ou exploração.
+
+## 12. Ordem sugerida de construção
 
 Para o plano de implementação detalhar:
 
+0. Esqueleto do repo: estrutura de §11.1, `.gitignore`, `CLAUDE.md`, `README.md`, `docker-compose.yml`, branches `main` e `develop`.
 1. Projeto, schema, migração, `createCalendar()` e seed do `Calendar` + `CalendarAdmin`.
 2. App OAuth no Google Cloud como External/Testing (§4.3), Auth.js + Google, guarda do `/admin/[slug]`, conexão OAuth do calendário.
 3. Função de reconciliação + testes (antes de qualquer chamada real ao Google).
@@ -533,4 +575,5 @@ Para o plano de implementação detalhar:
 6b. Contatos e grupos: tela `/admin/[slug]/contatos`, autocomplete e criação pelo uso (§6.7).
 7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
 8. Embed, JSON público e feed `.ics`.
-9. Deploy na Vercel, PgBouncer no EasyPanel, snippet na landing.
+9. Deploy: Dockerfile, workflow GHCR, app e volume no EasyPanel, snippet na landing.
+10. Documentação versionada: `ARCHITECTURE.md`, `PRODUCT.md`, `DEPLOY.md`, `DESIGN_SYSTEM.md` — escritos a partir deste spec, que a partir daí deixa de ser a fonte de verdade.
