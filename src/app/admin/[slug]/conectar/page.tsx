@@ -8,6 +8,9 @@ const ERROS: Record<string, string> = {
   'sem-codigo': 'O Google não devolveu um código de autorização. Tente de novo.',
   'sem-refresh-token':
     'O Google não devolveu um refresh token. Revogue o acesso do app na conta e conecte de novo.',
+  'state-invalido':
+    'A verificação de segurança da conexão falhou. Tente conectar de novo a partir desta página.',
+  'falha-troca-token': 'Não foi possível concluir a conexão com o Google. Tente de novo.',
 }
 
 export default async function ConectarPage({
@@ -26,12 +29,20 @@ export default async function ConectarPage({
   })
 
   let agendas: { id: string; summary: string }[] = []
+  let agendasError = false
   if (connection) {
-    const client = await getCalendarClient(calendar.id)
-    const { data } = await client.calendarList.list()
-    agendas = (data.items ?? [])
-      .filter((c): c is typeof c & { id: string } => Boolean(c.id))
-      .map((c) => ({ id: c.id, summary: c.summary ?? c.id }))
+    try {
+      const client = await getCalendarClient(calendar.id)
+      const { data } = await client.calendarList.list()
+      agendas = (data.items ?? [])
+        .filter((c): c is typeof c & { id: string } => Boolean(c.id))
+        .map((c) => ({ id: c.id, summary: c.summary ?? c.id }))
+    } catch (err) {
+      // Refresh token revogado ou Google fora do ar: mostramos a tela mesmo
+      // assim, com aviso, em vez de derrubar a página inteira.
+      console.error('Falha ao listar agendas do Google:', err)
+      agendasError = true
+    }
   }
 
   return (
@@ -63,6 +74,11 @@ export default async function ConectarPage({
           <p className="text-sm opacity-70">
             Conectado como <strong>{connection.googleEmail}</strong>.
           </p>
+          {agendasError && (
+            <p role="alert" className="rounded-lg border border-red-300 bg-red-50 p-4 text-sm">
+              Não foi possível listar as agendas — a conexão pode ter sido revogada. Reconecte.
+            </p>
+          )}
           <div className="space-y-2">
             <p className="font-medium">Qual agenda este calendário usa?</p>
             {agendas.map((agenda) => (
