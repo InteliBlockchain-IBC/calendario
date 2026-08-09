@@ -27,13 +27,16 @@ export async function getCalendarClient(calendarId: string): Promise<calendar_v3
   // economizar uma ida ao Google na próxima chamada.
   oauth2.on('tokens', (tokens) => {
     if (!tokens.access_token) return
-    void prisma.googleConnection.update({
-      where: { calendarId },
-      data: {
-        accessToken: tokens.access_token,
-        expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
-      },
-    })
+    void prisma.googleConnection
+      .update({
+        where: { calendarId },
+        data: {
+          accessToken: tokens.access_token,
+          expiresAt: tokens.expiry_date ? new Date(tokens.expiry_date) : null,
+        },
+      })
+      // Best-effort: cache do access token. Se falhar, a próxima chamada renova de novo.
+      .catch((err) => console.error('Falha ao salvar access token renovado:', err))
   })
 
   return google.calendar({ version: 'v3', auth: oauth2 })
