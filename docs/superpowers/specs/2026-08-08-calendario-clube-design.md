@@ -25,6 +25,7 @@ Uma plataforma web onde a diretoria mantém o calendário do clube uma única ve
 2. Um embed para a landing page do clube.
 3. Um feed `.ics` assinável no celular do membro.
 4. Os eventos espelhados no Google Agenda do clube.
+5. Convites para os membros, com confirmação de presença.
 
 Configuração restrita a admins do clube; visualização aberta.
 
@@ -37,6 +38,9 @@ Configuração restrita a admins do clube; visualização aberta.
 | Visibilidade | **Uma agenda Google só + flag `isPublic`** | Evento interno vai para a mesma agenda (que a diretoria já acessa) e simplesmente não aparece no site. |
 | Onde mora o código | **Projeto novo, standalone** | Precisa ser embutível na landing hoje e, potencialmente, no `gestao_pessoas` depois. Um serviço com embed serve os dois. |
 | Escala futura | **Costura, não feature** | Modelo de dados já multi-inquilino; sem onboarding, cobrança ou tema por cliente. |
+| Convites | **Delegados ao Google** | Convidado em evento do Google não é campo de texto: o Google envia o convite, insere o evento na agenda do convidado, manda lembrete e registra o RSVP. A plataforma escreve a lista e lê as respostas. |
+
+Essa última linha elimina três features do escopo: servidor de e-mail, controle de entrega e tela de confirmação de presença. Detalhe em §6.7.
 
 ### 3.1 Sobre escalar para outros clubes/instituições
 
@@ -205,6 +209,30 @@ Uma linha no MVP, criada pelo seed através de `createCalendar()` — a mesma fu
 
 Semeada com os e-mails da diretoria. Adicionar admin não exige redeploy.
 
+### `Contact`
+
+A agenda de contatos do calendário — de onde saem os convidados dos eventos.
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `id` | uuid | |
+| `calendarId` | uuid | |
+| `name` | string? | opcional; contato criado pelo uso nasce sem nome |
+| `email` | string | único junto com `calendarId` |
+| `groups` | relação N:N com `ContactGroup` | |
+| `createdAt` / `updatedAt` | datetime | |
+
+### `ContactGroup`
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `id` | uuid | |
+| `calendarId` | uuid | |
+| `name` | string | único junto com `calendarId` — "Diretoria", "Turma 2026" |
+| `contacts` | relação N:N com `Contact` | |
+
+Grupos são livres e um contato pertence a quantos precisar. A tabela de junção é a implícita do Prisma — nenhum modelo extra a manter.
+
 ### `Event`
 
 Dois blocos de campos, com donos distintos. É essa separação que faz a sincronização não ter conflito.
@@ -222,6 +250,7 @@ Dois blocos de campos, com donos distintos. É essa separação que faz a sincro
 | `location` | string? |
 | `status` | enum `CONFIRMED \| CANCELLED` |
 | `recurringEventId` | string? — preenchido quando é ocorrência de uma série |
+| `attendees` | json — lista de `{email, name, responseStatus}` (§6.7) |
 
 **Campos da plataforma** (o sync **nunca** toca):
 
@@ -251,6 +280,8 @@ Criar, editar ou apagar evento no admin chama a API do Google na mesma requisiç
 - criar → `events.insert`, guarda o `googleEventId` retornado
 - editar campos do Google → `events.patch`
 - apagar → `events.delete`
+
+A lista de convidados vai junto, no campo `attendees` da API, e o parâmetro `sendUpdates` decide se o Google dispara e-mail (§6.7).
 
 **Se a chamada ao Google falhar, a operação inteira falha** e nada é gravado no banco. Um evento nunca existe só de um lado. Editar *apenas* campos da plataforma (`isPublic`, arte, tag) não toca o Google.
 
@@ -357,6 +388,27 @@ Consumo por calendário: no teto, 144 syncs/dia (um a cada 10 min) mais o botão
 
 **O gargalo não é o Google, é o banco.** Conexões de Postgres esgotam muito antes de qualquer quota — é o motivo do PgBouncer em §4.1. A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
 
+### 6.7 Convidados e contatos
+
+**O Google faz o trabalho.** Escrever `attendees` no evento faz o Google enviar o convite, inserir o evento na agenda de cada convidado, mandar lembrete e registrar a resposta. A plataforma escreve a lista e lê o `responseStatus` de volta no sync. Não há servidor de e-mail, controle de entrega nem tela de confirmação de presença — o admin simplesmente passa a exibir "12 convidados · 8 confirmaram" sem nenhum código de RSVP.
+
+**Convidados são dado do Google.** `Event.attendees` é campo JSON no bloco do Google (§5), sobrescrito a cada sync, porque o RSVP muda lá e não aqui. Não é tabela: no MVP nunca se pergunta "de quais eventos esta pessoa participou", e normalizar antes dessa pergunta existir é estrutura sem uso.
+
+**Notificação é escolha por evento.** Checkbox "notificar convidados" na tela do evento, mapeado para o parâmetro `sendUpdates` da API:
+
+| Checkbox | `sendUpdates` | Padrão |
+|---|---|---|
+| marcado | `all` | ligado ao **criar** |
+| desmarcado | `none` | desligado ao **editar** |
+
+Os padrões invertidos são deliberados: criar evento sem avisar ninguém torna o convite inútil, e corrigir uma vírgula na descrição disparando quarenta e-mails de "evento atualizado" faz as pessoas pararem de ler os avisos que importam. Quem quiser notificar uma edição relevante — mudança de horário — marca a caixa.
+
+**Contatos se constroem pelo uso.** O campo de convidados tem autocomplete sobre `Contact` e aceita e-mail digitado na hora. E-mail novo confirmado entra no evento **e** vira contato, com nome vazio. Não existe cadastro prévio a ser feito antes de a ferramenta ser útil — o que é justamente o passo que ninguém dá. A tela de contatos serve para completar nomes, agrupar e apagar erro de digitação.
+
+**Grupos são livres.** `ContactGroup` nomeado pelo admin, N:N com `Contact`, criado inline ao digitar um nome novo no contato — sem tela dedicada de gestão de grupos. Convidar um grupo expande para os e-mails dos seus contatos no momento da escrita; o evento guarda pessoas, não o grupo. Assim, mudar a composição de um grupo não reescreve silenciosamente a lista de convidados de eventos que já saíram.
+
+**E-mail de convidado nunca sai em rota pública.** Ver §8 — é regra de consulta, não de renderização, e tem teste próprio (§9).
+
 ## 7. Rotas e telas
 
 | Rota | Acesso | Descrição |
@@ -367,6 +419,7 @@ Consumo por calendário: no teto, 144 syncs/dia (um a cada 10 min) mais o botão
 | `/api/calendars/[slug]/events` | público | JSON dos eventos publicados. |
 | `/api/calendars/[slug]/ics` | público | Feed `.ics` assinável. |
 | `/admin/[slug]` | allowlist do calendário | Gestão do calendário. |
+| `/admin/[slug]/contatos` | allowlist do calendário | Lista de contatos: nome, e-mail, grupos. |
 | `/api/calendars/[slug]/sync` | sessão admin | Sync incremental (botão "Sincronizar agora"). |
 | `/api/auth/*` | — | Auth.js. |
 
@@ -403,7 +456,8 @@ Uma tela só:
 
 - Tabela de eventos, próximos primeiro, passados atrás de um filtro.
 - Cada linha: título, data, área, e um toggle **"no site"**.
-- Botão de editar abre painel lateral com os quatro campos públicos e o upload da arte.
+- Botão de editar abre painel lateral com os quatro campos públicos, o upload da arte e a lista de convidados.
+- Convidados: autocomplete sobre `Contact`, aceita e-mail novo, permite adicionar um `ContactGroup` inteiro de uma vez, e mostra o RSVP vindo do Google ("12 convidados · 8 confirmaram"). Checkbox "notificar convidados" conforme §6.7.
 - Botão **"Criar evento"** (avulso — recorrência se cria no Google).
 - Botão **"Sincronizar agora"** com o resultado em texto, e aviso persistente se `lastSyncError` estiver preenchido (§6.5).
 - Bloco com o snippet de embed pronto para copiar.
@@ -416,6 +470,8 @@ Sem dashboard, sem gráficos, sem histórico de alterações.
 - **`/api/calendars/[slug]/sync`:** exige sessão de admin do calendário. Não existe segredo compartilhado, porque não existe chamador automatizado externo (§6.2).
 - **Sync disparado por leitura:** roda dentro do `after()` da própria requisição, sem endpoint exposto. Não há superfície nova a proteger.
 - **Rotas públicas:** devolvem apenas eventos com `isPublic = true` e `status = CONFIRMED`, de um `Calendar` com `status = ACTIVE`. Calendário desligado responde 404 em todas as rotas públicas. Os filtros moram na camada de query, não na renderização.
+- **`attendees` e `Contact` nunca aparecem em rota pública.** Nem no JSON, nem na página do evento, nem no `.ics`. São dados pessoais de membros do clube, e a única razão de estarem no sistema é alimentar o convite do Google. A consulta pública seleciona campos explicitamente — nunca devolve a linha inteira do `Event`.
+- **O `.ics` é o risco silencioso.** O formato tem linha `ATTENDEE`, e gerar o arquivo "completo" a partir do evento publicaria a lista de e-mails dos membros num arquivo aberto na internet, sem nenhum erro visível. O gerador do feed monta apenas os campos públicos, e isso está em §9 como teste.
 - **Upload:** valida content-type de imagem e tamanho máximo antes de enviar ao Blob.
 - **`refreshToken` em texto plano no banco.** Risco aceito conscientemente: o banco não é exposto publicamente e o token concede escrita apenas na agenda do clube. Caminho de melhoria, quando houver mais de um inquilino: criptografia em coluna com chave em env var.
 
@@ -441,6 +497,11 @@ Mais a guarda de disparo, que evita uma tempestade de syncs se o calendário rec
 8. `lastSyncedAt` de menos de 10 min não dispara sync; entre 10 min e 24 h dispara em segundo plano; acima de 24 h ou nulo dispara de forma bloqueante.
 9. `syncingAt` de menos de 2 minutos atrás bloqueia um segundo disparo.
 
+E o vazamento de dado pessoal, que é a outra forma de o sistema falhar de modo grave e silencioso (§8):
+
+10. A resposta do JSON público de um evento com convidados não contém nenhum e-mail.
+11. O `.ics` gerado para um evento com convidados não contém linha `ATTENDEE` nem qualquer e-mail.
+
 São os únicos testes do MVP. O resto é CRUD e renderização.
 
 ## 10. Fora de escopo (MVP)
@@ -448,7 +509,8 @@ São os únicos testes do MVP. O resto é CRUD e renderização.
 Registrado para não voltar por inércia:
 
 - Criar evento **recorrente** pela plataforma (lê recorrentes do Google; cria apenas avulsos).
-- RSVP, inscrição interna ou lista de presença.
+- RSVP próprio e lista de presença — o RSVP dos convidados vem pronto do Google (§6.7); o que fica de fora é presença de quem não foi convidado.
+- Importação de contatos em massa (CSV, colar lista) e integração com a base de membros do `gestao_pessoas` — a lista se constrói pelo uso (§6.7); importar volta se o cadastro manual doer.
 - Notificações e lembretes.
 - Integração com o `gestao_pessoas`.
 - Papéis além de admin/público.
@@ -467,7 +529,8 @@ Para o plano de implementação detalhar:
 3. Função de reconciliação + testes (antes de qualquer chamada real ao Google).
 4. Sync de volta: busca por janela, os dois modos de varredura (§6.4), lock por `syncingAt`, botão "Sincronizar agora".
 5. Admin: listagem, toggle de publicação, edição dos campos públicos, upload.
-6. Escrita para o Google: criar/editar/apagar evento.
+6. Escrita para o Google: criar/editar/apagar evento, com convidados e `sendUpdates`.
+6b. Contatos e grupos: tela `/admin/[slug]/contatos`, autocomplete e criação pelo uso (§6.7).
 7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
 8. Embed, JSON público e feed `.ics`.
 9. Deploy na Vercel, PgBouncer no EasyPanel, snippet na landing.
