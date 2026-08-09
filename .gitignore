@@ -18,6 +18,9 @@ contexts/
 .worktrees/
 
 # Uploads locais
-uploads/
+/uploads/
 
 .DS_Store
+
+# Override local de porta (conflito de porta nesta máquina)
+docker-compose.override.yml
