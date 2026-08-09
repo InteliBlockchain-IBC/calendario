@@ -1,4 +1,30 @@
-import type { Event, Area } from '@prisma/client'
+import type { Prisma, Area } from '@prisma/client'
+
+/**
+ * `select` único para toda consulta pública de evento. `attendees` e a
+ * `description` crua do Google ficam de fora por construção — nunca chegam
+ * à memória do servidor. Regra de consulta *e* de tipo, não de renderização
+ * (§8, CLAUDE.md regra 2): uma única lista de campos, reusada em toda rota
+ * pública, para não duplicá-la (e arriscar divergir) em cinco lugares.
+ */
+export const publicEventSelect = {
+  id: true,
+  title: true,
+  publicTitle: true,
+  publicDescription: true,
+  startsAt: true,
+  endsAt: true,
+  allDay: true,
+  location: true,
+  area: true,
+  imageUrl: true,
+  signupUrl: true,
+  status: true,
+  isPublic: true,
+} satisfies Prisma.EventSelect
+
+/** Formato exato que sai de `prisma.event.findMany({ select: publicEventSelect })`. */
+export type PublicEventSource = Prisma.EventGetPayload<{ select: typeof publicEventSelect }>
 
 /**
  * Formato público de um evento. Note a ausência de `attendees`, `description`
@@ -18,7 +44,7 @@ export type PublicEvent = {
   signupUrl: string | null
 }
 
-export function toPublicEvent(event: Event): PublicEvent {
+export function toPublicEvent(event: PublicEventSource): PublicEvent {
   return {
     id: event.id,
     title: event.publicTitle ?? event.title,

@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 import { CalendarView } from '@/components/CalendarView'
 
 export default async function CalendarPage({ params }: { params: Promise<{ slug: string }> }) {
@@ -15,6 +15,7 @@ export default async function CalendarPage({ params }: { params: Promise<{ slug:
       endsAt: { gte: new Date() },
     },
     orderBy: { startsAt: 'asc' },
+    select: publicEventSelect,
   })
 
   return (

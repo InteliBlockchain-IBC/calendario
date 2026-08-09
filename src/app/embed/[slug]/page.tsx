@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 import { CalendarView } from '@/components/CalendarView'
 import type { Area } from '@prisma/client'
 
@@ -26,6 +26,7 @@ export default async function EmbedPage({
       ...(normalizedArea ? { area: normalizedArea as Area } : {}),
     },
     orderBy: { startsAt: 'asc' },
+    select: publicEventSelect,
   })
 
   return (

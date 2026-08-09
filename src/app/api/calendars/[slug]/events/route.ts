@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 import type { Area } from '@prisma/client'
 
 export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
@@ -19,6 +19,7 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
       ...(area ? { area: area as Area } : {}),
     },
     orderBy: { startsAt: 'asc' },
+    select: publicEventSelect,
   })
 
   return NextResponse.json(

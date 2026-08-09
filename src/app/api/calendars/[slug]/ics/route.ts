@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 import { buildIcs } from '@/lib/public/ics'
 
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
@@ -10,6 +10,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
   const events = await prisma.event.findMany({
     where: { calendarId: calendar.id, isPublic: true, status: 'CONFIRMED' },
     orderBy: { startsAt: 'asc' },
+    select: publicEventSelect,
   })
 
   const ics = buildIcs({

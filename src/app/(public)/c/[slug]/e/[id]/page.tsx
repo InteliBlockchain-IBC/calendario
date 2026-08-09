@@ -1,7 +1,7 @@
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 
 export default async function EventPage({
   params,
@@ -13,6 +13,7 @@ export default async function EventPage({
 
   const row = await prisma.event.findFirst({
     where: { id, calendarId: calendar.id, isPublic: true, status: 'CONFIRMED' },
+    select: publicEventSelect,
   })
   if (!row) notFound()
 
