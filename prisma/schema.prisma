@@ -1,0 +1,130 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Area {
+  EDUCATIONAL
+  PROJECTS
+  MARKETING
+  PEOPLE
+  GENERAL
+}
+
+enum EventStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+enum CalendarStatus {
+  ACTIVE
+  DISABLED
+}
+
+model Calendar {
+  id               String         @id @default(uuid())
+  slug             String         @unique
+  name             String
+  timezone         String         @default("America/Sao_Paulo")
+  allowedDomain    String?
+  ownerEmail       String
+  status           CalendarStatus @default(ACTIVE)
+  googleCalendarId String?
+  syncPastDays     Int            @default(90)
+  syncFutureDays   Int            @default(365)
+  lastSyncedAt     DateTime?
+  syncingAt        DateTime?
+  lastSyncError    String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  admins           CalendarAdmin[]
+  googleConnection GoogleConnection?
+  events           Event[]
+  contacts         Contact[]
+  contactGroups    ContactGroup[]
+}
+
+model GoogleConnection {
+  id           String    @id @default(uuid())
+  calendarId   String    @unique
+  googleEmail  String
+  refreshToken String
+  accessToken  String?
+  expiresAt    DateTime?
+
+  calendar Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+}
+
+model CalendarAdmin {
+  id         String @id @default(uuid())
+  calendarId String
+  email      String
+
+  calendar Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+
+  @@unique([calendarId, email])
+}
+
+model Contact {
+  id         String   @id @default(uuid())
+  calendarId String
+  name       String?
+  email      String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  calendar Calendar       @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  groups   ContactGroup[] @relation("ContactToGroup")
+
+  @@unique([calendarId, email])
+}
+
+model ContactGroup {
+  id         String @id @default(uuid())
+  calendarId String
+  name       String
+
+  calendar Calendar  @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  contacts Contact[] @relation("ContactToGroup")
+
+  @@unique([calendarId, name])
+}
+
+model Event {
+  id         String @id @default(uuid())
+  calendarId String
+
+  // --- Campos do Google: sobrescritos a cada sync ---
+  googleEventId    String
+  title            String
+  description      String?
+  startsAt         DateTime
+  endsAt           DateTime
+  allDay           Boolean     @default(false)
+  location         String?
+  status           EventStatus @default(CONFIRMED)
+  recurringEventId String?
+  attendees        Json        @default("[]")
+
+  // --- Campos da plataforma: o sync NUNCA toca ---
+  isPublic          Boolean @default(false)
+  publicTitle       String?
+  publicDescription String?
+  imageUrl          String?
+  area              Area?
+  signupUrl         String?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  syncedAt  DateTime?
+
+  calendar Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+
+  @@unique([calendarId, googleEventId])
+  @@index([calendarId, startsAt])
+}
