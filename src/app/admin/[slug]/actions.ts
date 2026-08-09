@@ -148,6 +148,16 @@ export async function deleteEvent(slug: string, eventId: string, notify: boolean
   revalidatePath(`/c/${slug}`)
 }
 
-async function upsertContactsFromEmails(_calendarId: string, _emails: string[]) {
-  // Implementado na Task 9.
+/**
+ * Contato nasce do uso: e-mail digitado num evento vira contato sem nome, que
+ * o admin completa depois. Não existe cadastro prévio a ser feito antes de a
+ * ferramenta ser útil — que é justamente o passo que ninguém dá (§6.7).
+ */
+async function upsertContactsFromEmails(calendarId: string, emails: string[]) {
+  if (emails.length === 0) return
+
+  await prisma.contact.createMany({
+    data: emails.map((email) => ({ calendarId, email })),
+    skipDuplicates: true,
+  })
 }
