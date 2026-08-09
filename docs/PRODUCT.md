@@ -100,7 +100,12 @@ Cada um volta quando doer de verdade — não antes.
 
 ## 6. Peças pendentes de ação humana
 
-Duas partes do sistema estão implementadas em código mas dependem de uma ação fora do repositório para funcionar em produção. Não confundir com "fora de escopo": ambas **serão** feitas, só não estão feitas ainda.
+Três partes do sistema estão implementadas em código mas dependem de uma ação fora do repositório para funcionar em produção. Não confundir com "fora de escopo": todas **serão** feitas, só não estão feitas ainda.
 
+- **Cadastro dos admins como test users no Google Cloud.** O app OAuth roda em modo External + Testing (`DEPLOY.md` §5.2); login em `/admin/[slug]` só funciona para e-mails cadastrados na lista de test users do projeto (`DEPLOY.md` §5.3). Sem isso, o Google recusa o login com `access_denied` antes de chegar ao app — todo `CalendarAdmin` novo precisa ser adicionado lá manualmente.
 - **Conexão OAuth real com a agenda do clube.** O fluxo (`/admin/[slug]/conectar`) está implementado e testável, mas nenhum admin autorizou de fato a conta oficial do clube até o momento desta documentação. Até isso acontecer, `Calendar.googleCalendarId` é nulo e `loadCalendarBySlug`/`runSync` não têm o que sincronizar.
 - **Primeiro deploy real no EasyPanel.** Dockerfile, workflow do GitHub Actions e instruções estão prontos (`DEPLOY.md`), mas a configuração do app/volume no EasyPanel e o primeiro `push` para `main` ainda não aconteceram.
+
+## 6.1 Pendências de implementação (não é ação humana — é código sem UI)
+
+- **Edição de evento e campos públicos pelo admin** (arte, área, link de inscrição, editar/apagar evento). As server actions e rotas já existem — `updatePublicFields`, `updateGoogleFields`, `deleteEvent`, `saveContact`, `expandGroup` (`src/app/admin/[slug]/actions.ts`, `.../contatos/actions.ts`) e `POST /api/calendars/[slug]/upload` — passam por `requireCalendarAdmin` e têm cobertura de teste, mas **nenhuma tela do admin as chama ainda**. Hoje o admin só cria evento, alterna publicado/rascunho e sincroniza; a tela de contatos só apaga. Pendente de uma task futura.

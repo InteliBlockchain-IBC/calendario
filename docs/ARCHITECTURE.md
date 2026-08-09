@@ -194,9 +194,9 @@ Todas as quatro primeiras passam por `loadCalendarBySlug` (§7) e retornam **404
 | `GET /admin/[slug]/conectar/start` | Inicia o fluxo OAuth (gera `state`, grava cookie, redireciona ao Google). |
 | `GET /admin/[slug]/conectar/callback` | Troca o `code` por tokens, valida `state`, grava `GoogleConnection`. |
 | `POST /api/calendars/[slug]/sync` | Dispara **varredura completa** (`runSync(id, 'full')`), devolve contagem em texto. |
-| `POST /api/calendars/[slug]/upload` | Recebe a arte do evento (JPG/PNG/WebP, até 5 MB), grava no volume com nome gerado. |
+| `POST /api/calendars/[slug]/upload` | Recebe a arte do evento (JPG/PNG/WebP, até 5 MB), grava no volume com nome gerado. **Implementada, sem UI que a chame ainda** — ver `PRODUCT.md` §6.1. |
 
-Server Actions em `src/app/admin/[slug]/actions.ts` (`togglePublic`, `updatePublicFields`, `createEvent`, `updateGoogleFields`, `deleteEvent`) e `.../contatos/actions.ts` (`saveContact`, `deleteContact`, `expandGroup`) — todas chamam `requireCalendarAdmin` internamente.
+Server Actions em `src/app/admin/[slug]/actions.ts` (`togglePublic`, `updatePublicFields`, `createEvent`, `updateGoogleFields`, `deleteEvent`) e `.../contatos/actions.ts` (`saveContact`, `deleteContact`, `expandGroup`) — todas chamam `requireCalendarAdmin` internamente. **Só `togglePublic` e `createEvent` são chamadas por alguma tela do admin hoje** (`GET /admin/[slug]` acima); `updatePublicFields`, `updateGoogleFields`, `deleteEvent`, `saveContact` e `expandGroup` existem no código e são testáveis, mas nenhuma tela as alcança ainda — ver `PRODUCT.md` §6.1.
 
 ### API
 
@@ -224,15 +224,17 @@ Admin de um calendário não é automaticamente admin de outro: a checagem é se
 
 ### 8.1 Ida — plataforma → Google (`src/app/admin/[slug]/actions.ts`, `src/lib/google/write-event.ts`)
 
-Criar, editar ou apagar evento no admin chama a API do Google **antes** de gravar no banco:
+Criar, editar ou apagar evento chama a API do Google **antes** de gravar no banco:
 
 - criar → `events.insert`, guarda o `googleEventId` retornado;
 - editar campos do Google → `events.patch`;
 - apagar → `events.delete`.
 
+**Hoje só "criar" é alcançável pela UI do admin** (`EventForm` em `GET /admin/[slug]`). `updateGoogleEvent`/`deleteGoogleEvent` e as actions `updateGoogleFields`/`deleteEvent` que os chamam existem e são testáveis, mas nenhuma tela do admin oferece editar ou apagar um evento ainda — ver `PRODUCT.md` §6.1.
+
 **Se a chamada ao Google falhar, a exceção sobe e nada é gravado no banco** — um evento nunca existe só de um lado. Editar apenas campos da plataforma (`togglePublic`, `updatePublicFields`) nunca chama o Google.
 
-A lista de convidados vai no campo `attendees` do payload; `sendUpdates` (`'all'` ou `'none'`) decide se o Google dispara e-mail. Padrão: **ligado ao criar**, **desligado ao editar** — checkbox "notificar convidados" na tela do evento inverte o padrão por operação.
+A lista de convidados vai no campo `attendees` do payload; `sendUpdates` (`'all'` ou `'none'`) decide se o Google dispara e-mail. Padrão: **ligado ao criar**, **desligado ao editar**. O checkbox "Notificar convidados por e-mail" existe hoje na tela de **criar** evento (`EventForm`); não há tela de editar para inverter o padrão nela ainda.
 
 ### 8.2 Volta — Google → plataforma: duas portas de disparo
 
