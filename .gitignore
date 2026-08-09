@@ -1,0 +1,23 @@
+node_modules/
+.next/
+out/
+build/
+*.tsbuildinfo
+
+.env
+.env*.local
+
+# IA — artefatos de sessão, não versionados
+docs/superpowers/
+.claude/
+.agents/
+ai/
+contexts/
+
+# Worktrees de agente
+.worktrees/
+
+# Uploads locais
+uploads/
+
+.DS_Store
