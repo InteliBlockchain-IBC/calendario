@@ -42,19 +42,31 @@ Configuração restrita a admins do clube; visualização aberta.
 
 O objetivo declarado é que a solução possa, no futuro, servir outras instituições. A abordagem é preparar as **costuras baratas** agora e não construir o produto multi-inquilino:
 
-**Incluído agora (custo marginal ~zero):**
-- Todo conteúdo pendura em `calendarId`. Nenhuma query global.
-- `Calendar.slug` é o identificador público usado no embed e nas rotas.
-- Lista de admins em tabela (`CalendarAdmin`), não em variável de ambiente.
-- Domínio de e-mail permitido é coluna do `Calendar` (`allowedDomain`), não constante.
+O critério é o custo relativo: entra agora o que é barato agora **e** caro depois; fica de fora o que custa o mesmo hoje ou daqui a um ano.
+
+**Incluído agora (barato agora, caro depois):**
+
+| Costura | Por que não dá para deixar pra depois |
+|---|---|
+| Todo conteúdo pendura em `calendarId`; nenhuma query global | Reescrever query por query é o trabalho clássico de migração multi-inquilino. |
+| `Calendar.slug` como identificador público em todas as rotas | Rota sem namespace de inquilino quebra link salvo quando ganha um. |
+| `/admin/[slug]`, não `/admin` | Idem — agora é o nome de uma pasta. |
+| `createCalendar()` como função de domínio, chamada pelo seed | O seed usa hoje; uma rota de signup usa amanhã. Criação espalhada no seed vira arqueologia. |
+| Slugs reservados (`admin`, `api`, `embed`, `c`, `login`) | Depois que existirem slugs em uso, reservar vira migração de dados. |
+| `Calendar.ownerEmail` e `Calendar.status` | Self-service precisa saber de quem é o calendário e desligá-lo sem apagar. Duas colunas. |
+| Admins em tabela (`CalendarAdmin`), não em env var | Env var é global por natureza; não existe env var por inquilino. |
+| `allowedDomain` como coluna do `Calendar` | Cada instituição tem o seu domínio. |
+| `GoogleConnection` por calendário | Cada inquilino autoriza a própria agenda. |
+| Sync disparado por calendário, nunca global (§6.2) | Um job global que enumera inquilinos é a peça que apodrece primeiro. |
+| App OAuth criado como **External** (§4.2) | Um app Internal não pode ser aberto depois — exige app novo e reautorização de todos. |
 
 **Explicitamente fora:**
-- Cadastro self-service de novo calendário.
+- Tela de cadastro self-service e verificação de e-mail.
 - Cobrança/planos.
 - Tema, cores ou logo por cliente.
 - Subdomínio ou domínio próprio por cliente.
 
-Esses quatro são decisões de produto e serão melhor tomadas com o segundo usuário na frente.
+Nenhum desses fica mais caro por esperar, e cada um decidido sem um segundo usuário na frente é chute.
 
 ## 4. Stack e infraestrutura
 
@@ -71,9 +83,11 @@ App **Next.js único** (App Router, full-stack), sem backend separado — o sist
 | Hospedagem do app | Vercel |
 | Banco | Novo *database* no Postgres da VPS que já roda o `gestao_pessoas` |
 | Imagens | Vercel Blob |
-| Cron do sync | GitHub Actions (`*/15 * * * *`) |
+| Disparo do sync | Sob demanda, na leitura, via `after()` do Next.js |
 
-**Por que GitHub Actions e não Vercel Cron:** no plano Hobby o Vercel Cron executa no máximo **uma vez por dia** — não atende "a cada X minutos". Um workflow do Actions fazendo `POST /api/sync` com um header secreto é gratuito, sem limite de frequência, e move o agendamento para fora do provedor de hospedagem.
+**Por que sync sob demanda e não cron:** um cron externo (GitHub Actions, Vercel Cron) é uma dependência de runtime morando fora do serviço — quem quisesse subir esta plataforma precisaria configurar agendamento à parte para a agenda simplesmente funcionar. Contradiz "plataforma independente". Pior, um cron único que varre todos os calendários é justamente a peça que não sobrevive a multi-inquilino. O disparo por leitura elimina a infra externa, e o sync passa a acontecer por calendário, proporcional ao uso de cada um. Detalhe em §6.2.
+
+*(Vercel Cron também não serviria pelo lado prático: no plano Hobby executa no máximo uma vez por dia.)*
 
 **Por que a VPS existente:** o Postgres do `gestao_pessoas` já está de pé e ocioso para essa carga. Um database novo no mesmo servidor custa zero e não acopla os dois sistemas (schemas independentes, sem foreign key entre eles). Se um dia for preciso isolar, Neon free serve como alternativa direta.
 
@@ -85,11 +99,22 @@ AUTH_SECRET=               # Auth.js
 AUTH_GOOGLE_ID=            # OAuth client do projeto Google Cloud do clube
 AUTH_GOOGLE_SECRET=
 BLOB_READ_WRITE_TOKEN=     # Vercel Blob
-CRON_SECRET=               # header do GitHub Actions para /api/sync
 NEXT_PUBLIC_APP_URL=       # base usada no snippet de embed e no feed .ics
 ```
 
-Escopos OAuth: `openid email profile` para login; `https://www.googleapis.com/auth/calendar` para a conexão do calendário (leitura + escrita).
+Nenhuma variável é específica de inquilino — o que varia por calendário mora no banco.
+
+### 4.2 App OAuth no Google Cloud
+
+Escopos: `openid email profile` para login; `https://www.googleapis.com/auth/calendar` para a conexão do calendário (leitura + escrita).
+
+O consent screen é criado como **External, em modo Testing**. Isso importa e é decisão consciente:
+
+- Um app **Internal** só aceita contas do Workspace do Inteli. Nenhuma instituição de fora conseguiria autorizar, e abrir depois significa criar app novo e reautorizar todo mundo — o item mais caro-depois do projeto inteiro.
+- **External em Testing** funciona com até 100 contas cadastradas na lista de teste, o que cobre o clube e os primeiros parceiros com folga, e não exige nada do Google.
+- A verificação do Google (necessária para publicar External sem o limite de 100) fica para quando existir um segundo cliente real. O escopo `calendar` é sensível e a revisão pede política de privacidade publicada, domínio verificado e vídeo demonstrativo, levando semanas. Quando chegar a hora, nada precisa ser refeito — só submetido.
+
+Consequência prática hoje: quem faz login vê o aviso de "app não verificado" e cada conta precisa constar na lista de teste do projeto no Google Cloud.
 
 ## 5. Modelo de dados
 
@@ -100,16 +125,21 @@ Quatro tabelas de domínio, mais as do Auth.js (`User`, `Account`, `Session`, `V
 | Campo | Tipo | Nota |
 |---|---|---|
 | `id` | uuid | |
-| `slug` | string, único | identificador público (`ibc`) — usado em `/c/[slug]` e no embed |
+| `slug` | string, único | identificador público (`ibc`) — usado em `/c/[slug]`, `/admin/[slug]` e no embed |
 | `name` | string | "Inteli Blockchain" |
 | `timezone` | string | `America/Sao_Paulo` |
 | `allowedDomain` | string? | `sou.inteli.edu.br`; null = qualquer domínio |
+| `ownerEmail` | string | quem criou/responde pelo calendário |
+| `status` | enum `ACTIVE \| DISABLED` | desligar sem apagar |
 | `googleCalendarId` | string? | id da agenda no Google |
 | `syncToken` | string? | token de sync incremental do Google |
-| `lastSyncedAt` | datetime? | |
+| `lastSyncedAt` | datetime? | usado pela checagem de obsolescência (§6.2) |
+| `syncingAt` | datetime? | lock de sync em andamento (§6.2) |
 | `createdAt` / `updatedAt` | datetime | |
 
-Uma linha no MVP. Multi-calendário no futuro é mais linhas, não reescrita.
+Uma linha no MVP, criada pelo seed através de `createCalendar()` — a mesma função que uma rota de cadastro chamaria no futuro. Multi-calendário é mais linhas, não reescrita.
+
+**Slugs reservados:** `admin`, `api`, `embed`, `c`, `login`, `auth`. Validados em `createCalendar()`.
 
 ### `GoogleConnection`
 
@@ -185,12 +215,26 @@ Criar, editar ou apagar evento no admin chama a API do Google na mesma requisiç
 
 ### 6.2 Volta — Google → plataforma
 
-`events.list` com **sync incremental**, disparado por duas portas para o mesmo código:
+`events.list` com **sync incremental**, disparado por duas portas para o mesmo código.
 
-- cron do GitHub Actions a cada 15 minutos
-- botão **"Sincronizar agora"** no admin
+**Porta 1 — obsolescência na leitura (o mecanismo principal).** Toda rota de leitura de um calendário (`/c/[slug]`, `/embed/[slug]`, o JSON público e o feed `.ics`) checa `lastSyncedAt`. Se passou de **10 minutos**, a rota:
 
-Parâmetros: `singleEvents=true` (expande séries recorrentes em ocorrências individuais), `showDeleted=true` (para receber cancelamentos), `syncToken` quando existir.
+1. responde imediatamente com o dado que já está no banco;
+2. dispara o sync em segundo plano via `after()` do Next.js.
+
+O visitante nunca espera pelo Google. O próximo já pega atualizado.
+
+Três propriedades que fazem disso a escolha certa e não só a mais barata:
+
+- **Nenhuma infra externa.** Clonar, dar deploy e funcionar. Não há agendamento a configurar em lugar nenhum — o que é o requisito de uma plataforma independente.
+- **Escala por inquilino automaticamente.** Calendário movimentado sincroniza com frequência; calendário sem visita não sincroniza, e não precisa, porque ninguém está olhando. Nenhum job precisa enumerar inquilinos.
+- **O `.ics` também é leitura.** Google e Apple buscam o feed dos assinantes periodicamente por conta própria, então um calendário sem tráfego no site continua sendo sincronizado por quem o assinou no celular.
+
+**Porta 2 — botão "Sincronizar agora"** no admin, para quando se quer ver a mudança na hora. Mesma função, execução síncrona, resultado em texto.
+
+**Guarda de concorrência:** antes de sincronizar, grava `syncingAt`. Se já existe um `syncingAt` de menos de 2 minutos atrás, o disparo é ignorado. *(Teto conhecido: se o processo serverless for encerrado no meio do sync, o lock segura até 2 minutos a mais que o necessário. Advisory lock do Postgres é o caminho de melhoria, se algum dia incomodar.)*
+
+Parâmetros da chamada: `singleEvents=true` (expande séries recorrentes em ocorrências individuais), `showDeleted=true` (para receber cancelamentos), `syncToken` quando existir.
 
 **Restrição real da API do Google:** `syncToken` é incompatível com `timeMin`, `timeMax`, `updatedMin`, `q` e `orderBy`. O sync inicial portanto varre a agenda inteira, sem janela de data — aceitável para um calendário de clube (centenas de eventos). Os demais parâmetros precisam ser idênticos entre a chamada inicial e as incrementais.
 
@@ -213,8 +257,8 @@ O resultado do sync é reportado em texto no admin: `"3 novos, 1 atualizado, 1 c
 | `/embed/[slug]` | público | Mesmo calendário sem cabeçalho/rodapé, para iframe. Aceita `?view=mes\|lista` e `?area=educational`. |
 | `/api/calendars/[slug]/events` | público | JSON dos eventos publicados. |
 | `/api/calendars/[slug]/ics` | público | Feed `.ics` assinável. |
-| `/admin` | allowlist | Gestão do calendário. |
-| `/api/sync` | cron + sessão admin | Sync incremental. |
+| `/admin/[slug]` | allowlist do calendário | Gestão do calendário. |
+| `/api/calendars/[slug]/sync` | sessão admin | Sync incremental (botão "Sincronizar agora"). |
 | `/api/auth/*` | — | Auth.js. |
 
 ### 7.1 Página pública
@@ -259,9 +303,10 @@ Sem dashboard, sem gráficos, sem histórico de alterações.
 
 ## 8. Segurança
 
-- **Login:** Auth.js + Google, restrito por `Calendar.allowedDomain`. O e-mail ainda precisa constar em `CalendarAdmin` para acessar `/admin` — pertencer ao domínio não basta.
-- **`/api/sync`:** aceita header `Authorization: Bearer ${CRON_SECRET}` **ou** sessão de admin válida.
-- **Rotas públicas:** devolvem apenas eventos com `isPublic = true` e `status = CONFIRMED`. O filtro mora na camada de query, não na renderização.
+- **Login:** Auth.js + Google, restrito por `Calendar.allowedDomain`. O e-mail ainda precisa constar em `CalendarAdmin` **daquele calendário** para acessar `/admin/[slug]` — pertencer ao domínio não basta. Admin de um calendário não é admin de outro.
+- **`/api/calendars/[slug]/sync`:** exige sessão de admin do calendário. Não existe segredo compartilhado, porque não existe chamador automatizado externo (§6.2).
+- **Sync disparado por leitura:** roda dentro do `after()` da própria requisição, sem endpoint exposto. Não há superfície nova a proteger.
+- **Rotas públicas:** devolvem apenas eventos com `isPublic = true` e `status = CONFIRMED`, de um `Calendar` com `status = ACTIVE`. Calendário desligado responde 404 em todas as rotas públicas. Os filtros moram na camada de query, não na renderização.
 - **Upload:** valida content-type de imagem e tamanho máximo antes de enviar ao Blob.
 - **`refreshToken` em texto plano no banco.** Risco aceito conscientemente: o banco não é exposto publicamente e o token concede escrita apenas na agenda do clube. Caminho de melhoria, quando houver mais de um inquilino: criptografia em coluna com chave em env var.
 
@@ -278,7 +323,12 @@ Um arquivo de teste cobrindo:
 5. Ocorrência de série recorrente é tratada como evento individual, com `recurringEventId` preenchido.
 6. Resposta 410 do Google descarta o `syncToken` e sinaliza varredura completa.
 
-É o único teste do MVP. O resto é CRUD e renderização.
+Mais a guarda de disparo, que é a outra pequena decisão com ramificação — e a que evita uma tempestade de syncs se o calendário receber muitos acessos simultâneos:
+
+7. `lastSyncedAt` recente não dispara sync; antigo dispara.
+8. `syncingAt` de menos de 2 minutos atrás bloqueia um segundo disparo.
+
+São os únicos testes do MVP. O resto é CRUD e renderização.
 
 ## 10. Fora de escopo (MVP)
 
@@ -290,7 +340,8 @@ Registrado para não voltar por inércia:
 - Integração com o `gestao_pessoas`.
 - Papéis além de admin/público.
 - Aprovação em duas etapas para publicar.
-- Cadastro self-service, cobrança, tema por cliente, domínio por cliente.
+- Tela de cadastro self-service, cobrança, tema por cliente, domínio por cliente — as costuras estão prontas (§3.1), a interface não.
+- Verificação do app OAuth junto ao Google (§4.2).
 
 Cada um volta quando doer de verdade.
 
@@ -298,12 +349,12 @@ Cada um volta quando doer de verdade.
 
 Para o plano de implementação detalhar:
 
-1. Projeto, schema, migração, seed do `Calendar` e dos `CalendarAdmin`.
-2. Auth.js + Google, guarda do `/admin`, conexão OAuth do calendário.
+1. Projeto, schema, migração, `createCalendar()` e seed do `Calendar` + `CalendarAdmin`.
+2. App OAuth no Google Cloud como External/Testing (§4.2), Auth.js + Google, guarda do `/admin/[slug]`, conexão OAuth do calendário.
 3. Função de reconciliação + testes (antes de qualquer chamada real ao Google).
-4. Sync de volta: `/api/sync`, botão no admin, workflow do GitHub Actions.
+4. Sync de volta: função de sync, lock por `syncingAt`, botão "Sincronizar agora".
 5. Admin: listagem, toggle de publicação, edição dos campos públicos, upload.
 6. Escrita para o Google: criar/editar/apagar evento.
-7. Página pública: lista, grade, alternância, página do evento.
+7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
 8. Embed, JSON público e feed `.ics`.
 9. Deploy na Vercel, banco na VPS, snippet na landing.
