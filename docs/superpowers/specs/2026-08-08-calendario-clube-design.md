@@ -285,9 +285,9 @@ Três propriedades que fazem disso a escolha certa e não só a mais barata:
 - **Escala por inquilino automaticamente.** Calendário movimentado sincroniza com frequência; calendário sem visita não sincroniza, e não precisa, porque ninguém está olhando. Nenhum job precisa enumerar inquilinos.
 - **O `.ics` também é leitura.** Google e Apple buscam o feed dos assinantes periodicamente por conta própria, então um calendário sem tráfego no site continua sendo sincronizado por quem o assinou no celular.
 
-**Porta 2 — botão "Sincronizar agora"** no admin, para quando se quer ver a mudança na hora. Execução síncrona, resultado em texto, e **modo de varredura diferente** — ver §6.3.
+**Porta 2 — botão "Sincronizar agora"** no admin, para quando se quer ver a mudança na hora. Execução síncrona, resultado em texto, e **modo de varredura diferente** — ver §6.4.
 
-**Guarda de concorrência:** antes de sincronizar, grava `syncingAt`. Se já existe um `syncingAt` de menos de 2 minutos atrás, o disparo é ignorado. *(Teto conhecido: se o processo serverless for encerrado no meio do sync, o lock segura até 2 minutos a mais que o necessário. Advisory lock do Postgres é o caminho de melhoria, se algum dia incomodar.)*
+**Guarda de concorrência:** antes de sincronizar, grava `syncingAt`. Se já existe um `syncingAt` de menos de 2 minutos atrás, o disparo é ignorado. *(Teto conhecido: se o container reiniciar no meio do sync, o lock segura até 2 minutos a mais que o necessário. Advisory lock do Postgres é o caminho de melhoria, se algum dia incomodar.)*
 
 ### 6.3 Janela de sincronização
 
