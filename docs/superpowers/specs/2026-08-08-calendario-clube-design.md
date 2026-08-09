@@ -81,15 +81,16 @@ App **Next.js único** (App Router, full-stack), sem backend separado — o sist
 | API do Google | `googleapis` (Calendar API v3) |
 | Geração de .ics | pacote `ics` |
 | Hospedagem do app | Vercel |
-| Banco | Novo *database* no Postgres da VPS que já roda o `gestao_pessoas` |
+| Banco | **Neon** (Postgres gerenciado, pooler embutido) |
 | Imagens | Vercel Blob |
 | Disparo do sync | Sob demanda, na leitura, via `after()` do Next.js |
+
+**Por que Neon e não o Postgres da VPS.** A VPS que roda o `gestao_pessoas` tem Postgres sem pooler. Função serverless abre uma conexão por invocação, e com `max_connections` no padrão de 100 isso esgota em poucas centenas de requisições concorrentes — um teto muito abaixo de qualquer limite da API do Google (§6.6), e o gargalo real do sistema. O Neon tem pooler nativo, o *free tier* cobre a carga do clube com folga, e uma instância por inquilino no futuro é trivial. PgBouncer na VPS resolveria igual, ao custo de mais uma peça de infra para manter.
 
 **Por que sync sob demanda e não cron:** um cron externo (GitHub Actions, Vercel Cron) é uma dependência de runtime morando fora do serviço — quem quisesse subir esta plataforma precisaria configurar agendamento à parte para a agenda simplesmente funcionar. Contradiz "plataforma independente". Pior, um cron único que varre todos os calendários é justamente a peça que não sobrevive a multi-inquilino. O disparo por leitura elimina a infra externa, e o sync passa a acontecer por calendário, proporcional ao uso de cada um. Detalhe em §6.2.
 
 *(Vercel Cron também não serviria pelo lado prático: no plano Hobby executa no máximo uma vez por dia.)*
 
-**Por que a VPS existente:** o Postgres do `gestao_pessoas` já está de pé e ocioso para essa carga. Um database novo no mesmo servidor custa zero e não acopla os dois sistemas (schemas independentes, sem foreign key entre eles). Se um dia for preciso isolar, Neon free serve como alternativa direta.
 
 ### 4.1 Variáveis de ambiente
 
@@ -136,6 +137,7 @@ Quatro tabelas de domínio, mais as do Auth.js (`User`, `Account`, `Session`, `V
 | `syncFutureDays` | int, default `365` | quanto futuro a busca no Google cobre (§6.3) |
 | `lastSyncedAt` | datetime? | obsolescência (§6.2) e `updatedMin` da varredura incremental (§6.4) |
 | `syncingAt` | datetime? | lock de sync em andamento (§6.2) |
+| `lastSyncError` | string? | último erro de sync, exibido no admin (§6.5) |
 | `createdAt` / `updatedAt` | datetime | |
 
 Uma linha no MVP, criada pelo seed através de `createCalendar()` — a mesma função que uma rota de cadastro chamaria no futuro. Multi-calendário é mais linhas, não reescrita.
@@ -218,12 +220,15 @@ Criar, editar ou apagar evento no admin chama a API do Google na mesma requisiç
 
 `events.list` com **sync incremental**, disparado por duas portas para o mesmo código.
 
-**Porta 1 — obsolescência na leitura (o mecanismo principal).** Toda rota de leitura de um calendário (`/c/[slug]`, `/embed/[slug]`, o JSON público e o feed `.ics`) checa `lastSyncedAt`. Se passou de **10 minutos**, a rota:
+**Porta 1 — obsolescência na leitura (o mecanismo principal).** Toda rota de leitura de um calendário (`/c/[slug]`, `/embed/[slug]`, o JSON público e o feed `.ics`) checa `lastSyncedAt` e escolhe entre três caminhos:
 
-1. responde imediatamente com o dado que já está no banco;
-2. dispara o sync em segundo plano via `after()` do Next.js.
+| `lastSyncedAt` | Comportamento |
+|---|---|
+| menos de 10 min | serve direto, não sincroniza |
+| entre 10 min e 24 h | serve direto e sincroniza em segundo plano via `after()` |
+| mais de 24 h, ou nulo | **sincroniza antes de responder** |
 
-O visitante nunca espera pelo Google. O próximo já pega atualizado.
+Nos dois primeiros casos o visitante nunca espera pelo Google, e o próximo já pega atualizado. O terceiro existe porque um calendário sem visitas há dias tem dado velho demais para ser servido com cara de atual — e é justamente o cenário em que alguém abre o site pela primeira vez em semanas. Vale a espera de um segundo.
 
 Três propriedades que fazem disso a escolha certa e não só a mais barata:
 
@@ -251,6 +256,8 @@ updatedMin    = lastSyncedAt   # SOMENTE na varredura incremental
 **Por que janela e não a agenda inteira.** O comportamento de `singleEvents=true` sem `timeMax` diante de uma recorrência **sem data de fim** ("toda quinta, indefinidamente") não é especificado na documentação da API. Agendas institucionais têm eventos assim com frequência, então o volume de uma varredura sem janela é imprevisível — não dá para dimensionar nem testar. A janela troca um comportamento indefinido por um limite explícito.
 
 **Por que os dias são coluna e não constante.** Fixar "3 meses" no código seria trocar um problema por outro: cada instituição tem uma noção diferente de quanto passado importa. `syncPastDays` e `syncFutureDays` vivem no `Calendar`, com padrão razoável e ajuste por inquilino.
+
+**Por que o padrão futuro é generoso.** O custo da janela é plano, não linear: `maxResults` é 2.500 por página, então uma janela de 180 dias e uma de 455 dias custam a mesma **única** chamada para qualquer calendário realista (§6.6). Encolher não economiza nada. Já uma janela curta demais falha em silêncio — um evento marcado para daqui a 14 meses simplesmente não aparece no site, sem erro e sem log, e ninguém descobre o motivo. A janela não precisa refletir quanto uma instituição costuma planejar à frente; precisa ser maior que isso.
 
 **A janela não decide o que o site mostra.** São dois controles independentes, e é bom que sejam: a janela limita o que a plataforma busca no Google; `isPublic` e a consulta da página pública decidem o que aparece. Evento que sai da janela deixa de ser atualizado, mas permanece no banco — o link `/c/[slug]/e/[id]` continua funcionando.
 
@@ -282,6 +289,35 @@ A última linha fecha o único furo do modelo por janela: se alguém mover um ev
 5. Na varredura completa, ausência dentro da janela equivale a cancelamento (§6.4).
 
 O resultado do sync é reportado em texto no admin: `"3 novos, 1 atualizado, 1 cancelado"`.
+
+**Falha de sync.** Erro em qualquer varredura grava `Calendar.lastSyncError` e o admin exibe um aviso visível até o próximo sync bem-sucedido, que limpa o campo. Sem isso o pior modo de falha do sistema fica invisível: se o refresh token for revogado, a varredura de fundo falha dentro do `after()` sem ninguém para ver, o site congela no último dado bom e continua **parecendo** correto. Falha silenciosa num calendário é pior que erro na tela.
+
+### 6.6 Capacidade e limites
+
+Números apurados na documentação da API (quotas) e estimados a partir do padrão de uso (volumes e tempos).
+
+**Custo por operação.** O ponto que domina tudo: a varredura de fundo pergunta ao Google "o que mudou desde `lastSyncedAt`?", e como ela roda no máximo a cada 10 minutos, a resposta é quase sempre vazia.
+
+| Operação | Chamadas | Tempo estimado |
+|---|---|---|
+| Sync de fundo, nada mudou (caso comum) | 1 | ~200–400 ms, zero escrita |
+| Sync de fundo, poucos eventos alterados | 1 | ~400 ms |
+| Varredura completa, calendário do clube (~300 eventos) | 1 | < 1 s |
+| Varredura completa, instituição movimentada (~1.300 eventos) | 1 | ~1–3 s |
+
+Só passa de uma chamada acima de 2.500 ocorrências na janela — o que exige cerca de 55 eventos por semana sustentados. E aí são duas.
+
+**Quotas do Google** (documentadas): 1.000.000 requisições/dia por projeto, 10.000/min por projeto, 600/min por usuário.
+
+Consumo por calendário: no teto, 144 syncs/dia (um a cada 10 min) mais o botão manual ≈ **150 chamadas/dia**.
+
+- 1.000.000 ÷ 150 ≈ **6.600 calendários** antes de encostar na quota diária.
+- No pico, 6.600 calendários geram ~660 req/min contra o teto de 10.000/min.
+- O limite de 600/min *por usuário* não é compartilhado: cada inquilino autoriza com a própria conta Google.
+
+**O teto real de multi-inquilino** é a quota diária do projeto, porque o app OAuth é um só. Ele fica na casa dos milhares de instituições, e é ampliável mediante solicitação ao Google.
+
+**O gargalo não é o Google, é o banco.** Conexões de Postgres esgotam muito antes de qualquer quota — é o motivo do Neon em §4. A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
 
 ## 7. Rotas e telas
 
@@ -331,7 +367,7 @@ Uma tela só:
 - Cada linha: título, data, área, e um toggle **"no site"**.
 - Botão de editar abre painel lateral com os quatro campos públicos e o upload da arte.
 - Botão **"Criar evento"** (avulso — recorrência se cria no Google).
-- Botão **"Sincronizar agora"** com o resultado em texto.
+- Botão **"Sincronizar agora"** com o resultado em texto, e aviso persistente se `lastSyncError` estiver preenchido (§6.5).
 - Bloco com o snippet de embed pronto para copiar.
 
 Sem dashboard, sem gráficos, sem histórico de alterações.
@@ -364,7 +400,7 @@ Mais os dois casos que separam varredura completa de incremental (§6.4) — o p
 
 Mais a guarda de disparo, que evita uma tempestade de syncs se o calendário receber muitos acessos simultâneos:
 
-8. `lastSyncedAt` recente não dispara sync; antigo dispara.
+8. `lastSyncedAt` de menos de 10 min não dispara sync; entre 10 min e 24 h dispara em segundo plano; acima de 24 h ou nulo dispara de forma bloqueante.
 9. `syncingAt` de menos de 2 minutos atrás bloqueia um segundo disparo.
 
 São os únicos testes do MVP. O resto é CRUD e renderização.
@@ -396,4 +432,4 @@ Para o plano de implementação detalhar:
 6. Escrita para o Google: criar/editar/apagar evento.
 7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
 8. Embed, JSON público e feed `.ics`.
-9. Deploy na Vercel, banco na VPS, snippet na landing.
+9. Deploy na Vercel, banco no Neon, snippet na landing.
