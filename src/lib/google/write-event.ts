@@ -20,18 +20,40 @@ export type WriteArgs = {
   notify: boolean
 }
 
-function toGooglePayload(draft: EventDraft, timezone: string) {
-  const point = (d: Date) =>
-    draft.allDay
-      ? { date: d.toISOString().slice(0, 10) }
-      : { dateTime: d.toISOString(), timeZone: timezone }
+/** Data YYYY-MM-DD no fuso do CALENDÁRIO, não no do servidor — mesmo padrão de
+ * `dayKey` em `src/components/MonthGrid.tsx`. `d.toISOString()` sozinho converte
+ * para UTC e erra a data perto da virada do dia em fusos negativos. */
+function dateInTimezone(d: Date, timezone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    timeZone: timezone,
+  }).format(d)
+}
 
+/** `end.date` de evento allDay é EXCLUSIVO na API do Google: um evento de um
+ * dia só precisa `end.date` = dia seguinte a `start.date`, senão o Google
+ * responde 400 ("the specified time range is empty") quando início e fim
+ * caem no mesmo dia — o caso mais comum. Fácil de esquecer de novo. */
+function nextDateInTimezone(d: Date, timezone: string): string {
+  const [year, month, day] = dateInTimezone(d, timezone).split('-').map(Number)
+  const next = new Date(Date.UTC(year, month - 1, day + 1))
+  return next.toISOString().slice(0, 10)
+}
+
+/** Exportado só para teste direto (evita mockar o SDK do Google). */
+export function toGooglePayload(draft: EventDraft, timezone: string) {
   return {
     summary: draft.title,
     description: draft.description ?? undefined,
     location: draft.location ?? undefined,
-    start: point(draft.startsAt),
-    end: point(draft.endsAt),
+    start: draft.allDay
+      ? { date: dateInTimezone(draft.startsAt, timezone) }
+      : { dateTime: draft.startsAt.toISOString(), timeZone: timezone },
+    end: draft.allDay
+      ? { date: nextDateInTimezone(draft.endsAt, timezone) }
+      : { dateTime: draft.endsAt.toISOString(), timeZone: timezone },
     attendees: draft.attendeeEmails.map((email) => ({ email })),
   }
 }

@@ -1,7 +1,7 @@
 node_modules/
 .next/
-out/
-build/
+/out/
+/build/
 *.tsbuildinfo
 
 .env
@@ -11,8 +11,8 @@ build/
 docs/superpowers/
 .claude/
 .agents/
-ai/
-contexts/
+/ai/
+/contexts/
 
 # Worktrees de agente
 .worktrees/

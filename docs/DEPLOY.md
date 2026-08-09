@@ -53,6 +53,9 @@ Configurar no app do EasyPanel (não em `.env` — esse arquivo é só para dese
 ```
 DATABASE_URL=       # conexão direta ao Postgres, rede interna do EasyPanel
 AUTH_SECRET=        # gerar com `npx auth secret`
+AUTH_URL=           # URL pública do app (mesma de NEXT_PUBLIC_APP_URL). Obrigatória em produção
+                     # atrás do reverse proxy do EasyPanel — sem ela, Auth.js v5 recusa o host
+                     # com UntrustedHost e todo login falha.
 AUTH_GOOGLE_ID=     # client id do OAuth app do Google Cloud (§5)
 AUTH_GOOGLE_SECRET= # client secret do mesmo app
 UPLOAD_DIR=         # caminho do volume montado no container (§3)

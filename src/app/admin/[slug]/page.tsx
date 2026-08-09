@@ -37,6 +37,10 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
         <form
           action={async () => {
             'use server'
+            // A Server Action é um endpoint HTTP por si só — o check no
+            // render da página não protege a invocação direta da action,
+            // por isso repete aqui (mesmo padrão de togglePublic/deleteContact).
+            await requireCalendarAdmin(slug)
             const { runSync } = await import('@/lib/sync/run-sync')
             await runSync(calendar.id, 'full')
           }}

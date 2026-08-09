@@ -1,4 +1,16 @@
-import type { Prisma, Area } from '@prisma/client'
+import type { Prisma } from '@prisma/client'
+import { Area } from '@prisma/client'
+
+/**
+ * `?area=` de rota pública vem de query string — texto arbitrário do usuário,
+ * não um `Area` validado pelo TypeScript. Um valor que não bate com o enum
+ * (ex.: `?area=lixo`) faz o Prisma lançar e a rota devolve 500 sem essa
+ * checagem; filtrar aqui faz o valor inválido virar "sem filtro" em vez de erro.
+ */
+export function parseAreaParam(value: string | null | undefined): Area | undefined {
+  const upper = value?.toUpperCase()
+  return upper && (Object.values(Area) as string[]).includes(upper) ? (upper as Area) : undefined
+}
 
 /**
  * `select` único para toda consulta pública de evento. `attendees` e a
