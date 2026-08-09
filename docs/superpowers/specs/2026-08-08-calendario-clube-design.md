@@ -40,7 +40,7 @@ Configuração restrita a admins do clube; visualização aberta.
 
 ### 3.1 Sobre escalar para outros clubes/instituições
 
-O objetivo declarado é que a solução possa, no futuro, servir outras instituições. A abordagem é preparar as **costuras baratas** agora e não construir o produto multi-inquilino:
+O objetivo declarado é que a solução possa, no futuro, servir outras instituições. A abordagem é preparar as **costuras baratas** agora e não construir o produto multi-inquilino.
 
 O critério é o custo relativo: entra agora o que é barato agora **e** caro depois; fica de fora o que custa o mesmo hoje ou daqui a um ano.
 
@@ -58,7 +58,7 @@ O critério é o custo relativo: entra agora o que é barato agora **e** caro de
 | `allowedDomain` como coluna do `Calendar` | Cada instituição tem o seu domínio. |
 | `GoogleConnection` por calendário | Cada inquilino autoriza a própria agenda. |
 | Sync disparado por calendário, nunca global (§6.2) | Um job global que enumera inquilinos é a peça que apodrece primeiro. |
-| App OAuth criado como **External** (§4.2) | Um app Internal não pode ser aberto depois — exige app novo e reautorização de todos. |
+| App OAuth criado como **External** (§4.3) | Um app Internal não pode ser aberto depois — exige app novo e reautorização de todos. |
 
 **Explicitamente fora:**
 - Tela de cadastro self-service e verificação de e-mail.
@@ -81,21 +81,59 @@ App **Next.js único** (App Router, full-stack), sem backend separado — o sist
 | API do Google | `googleapis` (Calendar API v3) |
 | Geração de .ics | pacote `ics` |
 | Hospedagem do app | Vercel |
-| Banco | **Neon** (Postgres gerenciado, pooler embutido) |
+| Banco | Postgres da VPS (EasyPanel) **atrás de PgBouncer** |
 | Imagens | Vercel Blob |
 | Disparo do sync | Sob demanda, na leitura, via `after()` do Next.js |
-
-**Por que Neon e não o Postgres da VPS.** A VPS que roda o `gestao_pessoas` tem Postgres sem pooler. Função serverless abre uma conexão por invocação, e com `max_connections` no padrão de 100 isso esgota em poucas centenas de requisições concorrentes — um teto muito abaixo de qualquer limite da API do Google (§6.6), e o gargalo real do sistema. O Neon tem pooler nativo, o *free tier* cobre a carga do clube com folga, e uma instância por inquilino no futuro é trivial. PgBouncer na VPS resolveria igual, ao custo de mais uma peça de infra para manter.
 
 **Por que sync sob demanda e não cron:** um cron externo (GitHub Actions, Vercel Cron) é uma dependência de runtime morando fora do serviço — quem quisesse subir esta plataforma precisaria configurar agendamento à parte para a agenda simplesmente funcionar. Contradiz "plataforma independente". Pior, um cron único que varre todos os calendários é justamente a peça que não sobrevive a multi-inquilino. O disparo por leitura elimina a infra externa, e o sync passa a acontecer por calendário, proporcional ao uso de cada um. Detalhe em §6.2.
 
 *(Vercel Cron também não serviria pelo lado prático: no plano Hobby executa no máximo uma vez por dia.)*
 
+### 4.1 Pooling de conexão — obrigatório, não otimização
 
-### 4.1 Variáveis de ambiente
+Função serverless abre uma conexão por invocação. Com `max_connections` no padrão de 100, algumas centenas de requisições concorrentes esgotam o Postgres e o app passa a dar erro de conexão sem aviso prévio. **É o gargalo real do sistema** — chega muito antes de qualquer limite da API do Google (§6.6), que só aparece na casa dos milhares de inquilinos.
+
+PgBouncer entra entre a aplicação e o banco: aceita milhares de conexões de clientes e as multiplexa sobre um punhado de conexões reais.
+
+**No EasyPanel:** um App com a imagem `edoburu/pgbouncer` no mesmo projeto do Postgres, alcançando-o pelo nome do serviço na rede interna.
+
+| Variável | Valor |
+|---|---|
+| `DB_HOST` / `DB_PORT` | serviço do Postgres, `5432` |
+| `DB_USER` / `DB_PASSWORD` | credenciais do banco do calendário |
+| `POOL_MODE` | `transaction` |
+| `MAX_CLIENT_CONN` | `1000` |
+| `DEFAULT_POOL_SIZE` | `20` |
+| `AUTH_TYPE` | `scram-sha-256` |
+
+Escuta em `6432`, exposto publicamente **com TLS** — a Vercel chama de fora e não oferece IP fixo, então restrição por IP não é opção. Mesma postura que a VPS já tem hoje para o backend do `gestao_pessoas`.
+
+**Detalhe do Prisma que morde:** em `POOL_MODE=transaction` o Prisma precisa de duas URLs, porque migration usa recursos de sessão que esse modo não suporta.
+
+```prisma
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")   // via PgBouncer, aplicação
+  directUrl = env("DIRECT_URL")     // direto no Postgres, migrations
+}
+```
 
 ```
-DATABASE_URL=              # Postgres (database próprio, separado do gestao_pessoas)
+DATABASE_URL="postgresql://user:senha@<host>:6432/calendario?pgbouncer=true&connection_limit=1"
+DIRECT_URL="postgresql://user:senha@<host>:5432/calendario"
+```
+
+Omitir `?pgbouncer=true` produz erro intermitente de *prepared statement* que só se manifesta sob carga — o pior tipo de bug para descobrir em produção.
+
+**Nada no código depende de qual Postgres é.** Trocar por um gerenciado com pooler embutido (Neon, Supabase) é substituir essas duas variáveis de ambiente. A decisão é de operação, não de arquitetura, e pode ser revista a qualquer momento.
+
+*(Sobre auto-hospedar o Neon: o `docker-compose` do repositório oficial é ambiente de desenvolvimento dos mantenedores — cinco serviços coordenados, sem suporte nem documentação de operação em produção. E não entregaria nada além do que PgBouncer já entrega aqui: scale-to-zero não economiza em VPS própria, e o pooler do Neon é PgBouncer por baixo.)*
+
+### 4.2 Variáveis de ambiente
+
+```
+DATABASE_URL=              # via PgBouncer :6432, com ?pgbouncer=true&connection_limit=1
+DIRECT_URL=                # direto no Postgres :5432, usado pelas migrations
 AUTH_SECRET=               # Auth.js
 AUTH_GOOGLE_ID=            # OAuth client do projeto Google Cloud do clube
 AUTH_GOOGLE_SECRET=
@@ -105,7 +143,7 @@ NEXT_PUBLIC_APP_URL=       # base usada no snippet de embed e no feed .ics
 
 Nenhuma variável é específica de inquilino — o que varia por calendário mora no banco.
 
-### 4.2 App OAuth no Google Cloud
+### 4.3 App OAuth no Google Cloud
 
 Escopos: `openid email profile` para login; `https://www.googleapis.com/auth/calendar` para a conexão do calendário (leitura + escrita).
 
@@ -317,7 +355,7 @@ Consumo por calendário: no teto, 144 syncs/dia (um a cada 10 min) mais o botão
 
 **O teto real de multi-inquilino** é a quota diária do projeto, porque o app OAuth é um só. Ele fica na casa dos milhares de instituições, e é ampliável mediante solicitação ao Google.
 
-**O gargalo não é o Google, é o banco.** Conexões de Postgres esgotam muito antes de qualquer quota — é o motivo do Neon em §4. A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
+**O gargalo não é o Google, é o banco.** Conexões de Postgres esgotam muito antes de qualquer quota — é o motivo do PgBouncer em §4.1. A latência da página pública não depende do sync: é uma consulta indexada por `(calendarId, startsAt)`, e o `after()` roda depois da resposta ter saído.
 
 ## 7. Rotas e telas
 
@@ -416,7 +454,7 @@ Registrado para não voltar por inércia:
 - Papéis além de admin/público.
 - Aprovação em duas etapas para publicar.
 - Tela de cadastro self-service, cobrança, tema por cliente, domínio por cliente — as costuras estão prontas (§3.1), a interface não.
-- Verificação do app OAuth junto ao Google (§4.2).
+- Verificação do app OAuth junto ao Google (§4.3).
 
 Cada um volta quando doer de verdade.
 
@@ -425,11 +463,11 @@ Cada um volta quando doer de verdade.
 Para o plano de implementação detalhar:
 
 1. Projeto, schema, migração, `createCalendar()` e seed do `Calendar` + `CalendarAdmin`.
-2. App OAuth no Google Cloud como External/Testing (§4.2), Auth.js + Google, guarda do `/admin/[slug]`, conexão OAuth do calendário.
+2. App OAuth no Google Cloud como External/Testing (§4.3), Auth.js + Google, guarda do `/admin/[slug]`, conexão OAuth do calendário.
 3. Função de reconciliação + testes (antes de qualquer chamada real ao Google).
 4. Sync de volta: busca por janela, os dois modos de varredura (§6.4), lock por `syncingAt`, botão "Sincronizar agora".
 5. Admin: listagem, toggle de publicação, edição dos campos públicos, upload.
 6. Escrita para o Google: criar/editar/apagar evento.
 7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
 8. Embed, JSON público e feed `.ics`.
-9. Deploy na Vercel, banco no Neon, snippet na landing.
+9. Deploy na Vercel, PgBouncer no EasyPanel, snippet na landing.
