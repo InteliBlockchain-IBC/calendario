@@ -1,6 +1,7 @@
 import { requireCalendarAdmin } from '@/lib/auth/guard'
 import { prisma } from '@/lib/db'
 import { togglePublic } from './actions'
+import { EventForm } from './EventForm'
 
 export default async function AdminPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
@@ -10,6 +11,12 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
     where: { calendarId: calendar.id, startsAt: { gte: new Date() } },
     orderBy: { startsAt: 'asc' },
     take: 100,
+  })
+
+  const contacts = await prisma.contact.findMany({
+    where: { calendarId: calendar.id },
+    select: { email: true },
+    orderBy: { email: 'asc' },
   })
 
   const formatter = new Intl.DateTimeFormat('pt-BR', {
@@ -24,6 +31,21 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
         <h1 className="text-2xl font-semibold">{calendar.name}</h1>
         <span className="text-sm opacity-60">/{calendar.slug}</span>
       </header>
+
+      <div className="flex items-center gap-2">
+        <EventForm slug={slug} contactEmails={contacts.map((c) => c.email)} />
+        <form
+          action={async () => {
+            'use server'
+            const { runSync } = await import('@/lib/sync/run-sync')
+            await runSync(calendar.id, 'full')
+          }}
+        >
+          <button type="submit" className="rounded-lg border px-4 py-2">
+            Sincronizar agora
+          </button>
+        </form>
+      </div>
 
       {calendar.lastSyncError && (
         <div

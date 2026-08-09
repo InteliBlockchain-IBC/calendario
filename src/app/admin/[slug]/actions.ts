@@ -40,3 +40,114 @@ export async function updatePublicFields(slug: string, eventId: string, fields: 
   revalidatePath(`/admin/${slug}`)
   revalidatePath(`/c/${slug}`)
 }
+
+import {
+  createGoogleEvent,
+  updateGoogleEvent,
+  deleteGoogleEvent,
+  type EventDraft,
+} from '@/lib/google/write-event'
+
+/**
+ * O Google é chamado ANTES de gravar. Se ele falhar, a exceção sobe e nada é
+ * escrito no banco — um evento nunca existe só de um lado (§6.1).
+ */
+export async function createEvent(slug: string, draft: EventDraft, notify: boolean) {
+  const { calendar } = await requireCalendarAdmin(slug)
+  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
+
+  const google = await createGoogleEvent({
+    calendarId: calendar.id,
+    googleCalendarId: calendar.googleCalendarId,
+    timezone: calendar.timezone,
+    draft,
+    notify,
+  })
+
+  await prisma.event.create({
+    data: {
+      calendarId: calendar.id,
+      googleEventId: google.googleEventId,
+      title: google.title,
+      description: google.description,
+      startsAt: google.startsAt,
+      endsAt: google.endsAt,
+      allDay: google.allDay,
+      location: google.location,
+      status: google.status,
+      recurringEventId: google.recurringEventId,
+      attendees: google.attendees,
+      syncedAt: new Date(),
+    },
+  })
+
+  await upsertContactsFromEmails(calendar.id, draft.attendeeEmails)
+  revalidatePath(`/admin/${slug}`)
+  revalidatePath(`/c/${slug}`)
+}
+
+export async function updateGoogleFields(
+  slug: string,
+  eventId: string,
+  draft: EventDraft,
+  notify: boolean,
+) {
+  const { calendar } = await requireCalendarAdmin(slug)
+  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
+
+  const event = await prisma.event.findFirstOrThrow({
+    where: { id: eventId, calendarId: calendar.id },
+  })
+
+  const google = await updateGoogleEvent({
+    calendarId: calendar.id,
+    googleCalendarId: calendar.googleCalendarId,
+    googleEventId: event.googleEventId,
+    timezone: calendar.timezone,
+    draft,
+    notify,
+  })
+
+  await prisma.event.update({
+    where: { id: eventId },
+    data: {
+      title: google.title,
+      description: google.description,
+      startsAt: google.startsAt,
+      endsAt: google.endsAt,
+      allDay: google.allDay,
+      location: google.location,
+      status: google.status,
+      attendees: google.attendees,
+      syncedAt: new Date(),
+    },
+  })
+
+  await upsertContactsFromEmails(calendar.id, draft.attendeeEmails)
+  revalidatePath(`/admin/${slug}`)
+  revalidatePath(`/c/${slug}`)
+}
+
+export async function deleteEvent(slug: string, eventId: string, notify: boolean) {
+  const { calendar } = await requireCalendarAdmin(slug)
+  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
+
+  const event = await prisma.event.findFirstOrThrow({
+    where: { id: eventId, calendarId: calendar.id },
+  })
+
+  await deleteGoogleEvent({
+    calendarId: calendar.id,
+    googleCalendarId: calendar.googleCalendarId,
+    googleEventId: event.googleEventId,
+    notify,
+  })
+
+  await prisma.event.delete({ where: { id: eventId } })
+  revalidatePath(`/admin/${slug}`)
+  revalidatePath(`/c/${slug}`)
+}
+
+async function upsertContactsFromEmails(_calendarId: string, _emails: string[]) {
+  // Implementado na Task 9.
+}
