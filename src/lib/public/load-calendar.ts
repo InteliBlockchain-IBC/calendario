@@ -26,7 +26,7 @@ export async function loadCalendarBySlug(slug: string): Promise<Calendar> {
     // Dado velho demais para ser servido com cara de atual. Vale a espera.
     try {
       await runSync(calendar.id, 'incremental')
-      return prisma.calendar.findUniqueOrThrow({ where: { id: calendar.id } })
+      return await prisma.calendar.findUniqueOrThrow({ where: { id: calendar.id } })
     } catch {
       // Falha de sync não pode derrubar a página pública: o erro já ficou
       // registrado em lastSyncError e aparece no admin.
