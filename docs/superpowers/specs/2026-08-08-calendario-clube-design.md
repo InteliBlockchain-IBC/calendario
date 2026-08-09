@@ -132,8 +132,9 @@ Quatro tabelas de domínio, mais as do Auth.js (`User`, `Account`, `Session`, `V
 | `ownerEmail` | string | quem criou/responde pelo calendário |
 | `status` | enum `ACTIVE \| DISABLED` | desligar sem apagar |
 | `googleCalendarId` | string? | id da agenda no Google |
-| `syncToken` | string? | token de sync incremental do Google |
-| `lastSyncedAt` | datetime? | usado pela checagem de obsolescência (§6.2) |
+| `syncPastDays` | int, default `90` | quanto passado a busca no Google cobre (§6.3) |
+| `syncFutureDays` | int, default `365` | quanto futuro a busca no Google cobre (§6.3) |
+| `lastSyncedAt` | datetime? | obsolescência (§6.2) e `updatedMin` da varredura incremental (§6.4) |
 | `syncingAt` | datetime? | lock de sync em andamento (§6.2) |
 | `createdAt` / `updatedAt` | datetime | |
 
@@ -230,21 +231,55 @@ Três propriedades que fazem disso a escolha certa e não só a mais barata:
 - **Escala por inquilino automaticamente.** Calendário movimentado sincroniza com frequência; calendário sem visita não sincroniza, e não precisa, porque ninguém está olhando. Nenhum job precisa enumerar inquilinos.
 - **O `.ics` também é leitura.** Google e Apple buscam o feed dos assinantes periodicamente por conta própria, então um calendário sem tráfego no site continua sendo sincronizado por quem o assinou no celular.
 
-**Porta 2 — botão "Sincronizar agora"** no admin, para quando se quer ver a mudança na hora. Mesma função, execução síncrona, resultado em texto.
+**Porta 2 — botão "Sincronizar agora"** no admin, para quando se quer ver a mudança na hora. Execução síncrona, resultado em texto, e **modo de varredura diferente** — ver §6.3.
 
 **Guarda de concorrência:** antes de sincronizar, grava `syncingAt`. Se já existe um `syncingAt` de menos de 2 minutos atrás, o disparo é ignorado. *(Teto conhecido: se o processo serverless for encerrado no meio do sync, o lock segura até 2 minutos a mais que o necessário. Advisory lock do Postgres é o caminho de melhoria, se algum dia incomodar.)*
 
-Parâmetros da chamada: `singleEvents=true` (expande séries recorrentes em ocorrências individuais), `showDeleted=true` (para receber cancelamentos), `syncToken` quando existir.
+### 6.3 Janela de sincronização
 
-**Restrição real da API do Google:** `syncToken` é incompatível com `timeMin`, `timeMax`, `updatedMin`, `q` e `orderBy`. O sync inicial portanto varre a agenda inteira, sem janela de data — aceitável para um calendário de clube (centenas de eventos). Os demais parâmetros precisam ser idênticos entre a chamada inicial e as incrementais.
+A busca é **sempre limitada a uma janela de datas**, nunca à agenda inteira:
 
-**Regras da reconciliação:**
+```
+timeMin       = agora − Calendar.syncPastDays     (padrão 90)
+timeMax       = agora + Calendar.syncFutureDays   (padrão 365)
+singleEvents  = true      # expande séries recorrentes em ocorrências
+showDeleted   = true      # para receber cancelamentos
+maxResults    = 2500      # paginado por pageToken
+updatedMin    = lastSyncedAt   # SOMENTE na varredura incremental
+```
+
+**Por que janela e não a agenda inteira.** O comportamento de `singleEvents=true` sem `timeMax` diante de uma recorrência **sem data de fim** ("toda quinta, indefinidamente") não é especificado na documentação da API. Agendas institucionais têm eventos assim com frequência, então o volume de uma varredura sem janela é imprevisível — não dá para dimensionar nem testar. A janela troca um comportamento indefinido por um limite explícito.
+
+**Por que os dias são coluna e não constante.** Fixar "3 meses" no código seria trocar um problema por outro: cada instituição tem uma noção diferente de quanto passado importa. `syncPastDays` e `syncFutureDays` vivem no `Calendar`, com padrão razoável e ajuste por inquilino.
+
+**A janela não decide o que o site mostra.** São dois controles independentes, e é bom que sejam: a janela limita o que a plataforma busca no Google; `isPublic` e a consulta da página pública decidem o que aparece. Evento que sai da janela deixa de ser atualizado, mas permanece no banco — o link `/c/[slug]/e/[id]` continua funcionando.
+
+**Consequência de largar o `syncToken`.** O token é incompatível com `timeMin`/`timeMax` (documentado), então janela e sync por token são mutuamente exclusivos. Escolhida a janela, o incremental passa a ser por `updatedMin`, que compõe com ela sem conflito e cujo contrato cobre o caso crítico: *"When specified, entries deleted since this time will always be included regardless of showDeleted"*. Some junto o tratamento de **410 Gone** e o fallback de token expirado.
+
+### 6.4 Dois modos de varredura
+
+As duas portas de disparo fazem coisas deliberadamente diferentes:
+
+| | Fundo (leitura obsoleta) | Botão "Sincronizar agora" |
+|---|---|---|
+| `updatedMin` | sim | **não** |
+| Traz | só o que mudou desde `lastSyncedAt` | a janela inteira |
+| Custo | mínimo | uma varredura limitada |
+| Reconcilia sumiços | não | **sim** |
+
+A última linha fecha o único furo do modelo por janela: se alguém mover um evento no Google para fora da janela, ele para de voltar nas respostas e a plataforma ficaria exibindo dado velho. Na **varredura completa**, todo evento local com `startsAt` dentro da janela que não voltou do Google é marcado `CANCELLED` e some do site.
+
+**Primeiro sync após conectar a agenda:** `lastSyncedAt` é nulo, então não há `updatedMin` e a varredura é completa por consequência natural da regra — sem caso especial no código, e já limitada pela janela.
+
+**Essa regra vale exclusivamente na varredura completa.** Aplicá-la na incremental cancelaria o calendário inteiro, já que a incremental retorna apenas o que mudou. É um bug que passa despercebido em revisão e destrói dado em produção — por isso está em §9 como caso de teste explícito.
+
+### 6.5 Regras da reconciliação
 
 1. Evento novo vindo do Google entra com **`isPublic = false`**. Nada aparece no site sem alguém publicar deliberadamente. Este é o ponto central: a agenda do Google contém reunião interna, compromisso pessoal, o que for — o site mostra só o que foi curado.
 2. Evento existente: atualiza somente os campos do Google. Descrição pública, título público, arte, tag e link de inscrição sobrevivem intactos.
 3. Cancelado ou apagado no Google (`status: cancelled`): marcado `CANCELLED`, some do site, continua visível no admin.
-4. `syncToken` inválido (Google devolve **410 Gone**, tipicamente após semanas sem sync): descarta o token e refaz varredura completa.
-5. Escrita da plataforma que volta no próximo sync sobrescreve os campos do Google com dados idênticos — inofensivo, e não toca os campos da plataforma.
+4. Escrita da plataforma que volta no sync seguinte sobrescreve os campos do Google com dados idênticos — inofensivo, e não toca os campos da plataforma.
+5. Na varredura completa, ausência dentro da janela equivale a cancelamento (§6.4).
 
 O resultado do sync é reportado em texto no admin: `"3 novos, 1 atualizado, 1 cancelado"`.
 
@@ -321,12 +356,16 @@ Um arquivo de teste cobrindo:
 3. Atualização do Google sobrescreve `title`, `startsAt`, `endsAt`, `location`.
 4. `status: cancelled` marca `CANCELLED` em vez de apagar a linha.
 5. Ocorrência de série recorrente é tratada como evento individual, com `recurringEventId` preenchido.
-6. Resposta 410 do Google descarta o `syncToken` e sinaliza varredura completa.
 
-Mais a guarda de disparo, que é a outra pequena decisão com ramificação — e a que evita uma tempestade de syncs se o calendário receber muitos acessos simultâneos:
+Mais os dois casos que separam varredura completa de incremental (§6.4) — o par mais importante da lista, porque errar o segundo apaga o calendário inteiro do site:
 
-7. `lastSyncedAt` recente não dispara sync; antigo dispara.
-8. `syncingAt` de menos de 2 minutos atrás bloqueia um segundo disparo.
+6. Varredura **completa**: evento local dentro da janela ausente no retorno do Google é marcado `CANCELLED`.
+7. Varredura **incremental**: evento local ausente no retorno **não** é tocado.
+
+Mais a guarda de disparo, que evita uma tempestade de syncs se o calendário receber muitos acessos simultâneos:
+
+8. `lastSyncedAt` recente não dispara sync; antigo dispara.
+9. `syncingAt` de menos de 2 minutos atrás bloqueia um segundo disparo.
 
 São os únicos testes do MVP. O resto é CRUD e renderização.
 
@@ -352,7 +391,7 @@ Para o plano de implementação detalhar:
 1. Projeto, schema, migração, `createCalendar()` e seed do `Calendar` + `CalendarAdmin`.
 2. App OAuth no Google Cloud como External/Testing (§4.2), Auth.js + Google, guarda do `/admin/[slug]`, conexão OAuth do calendário.
 3. Função de reconciliação + testes (antes de qualquer chamada real ao Google).
-4. Sync de volta: função de sync, lock por `syncingAt`, botão "Sincronizar agora".
+4. Sync de volta: busca por janela, os dois modos de varredura (§6.4), lock por `syncingAt`, botão "Sincronizar agora".
 5. Admin: listagem, toggle de publicação, edição dos campos públicos, upload.
 6. Escrita para o Google: criar/editar/apagar evento.
 7. Página pública: lista, grade, alternância, página do evento — com o disparo de sync por obsolescência (§6.2) no lugar.
