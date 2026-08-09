@@ -18,8 +18,18 @@ export function CalendarView({
 }) {
   const [view, setView] = useState<'lista' | 'mes'>(initialView)
 
+  // "Hoje" precisa ser calculado no fuso do calendário, não no do servidor/UTC:
+  // perto da virada do mês os dois divergem por até ~14h dependendo do offset.
   const now = new Date()
-  const month = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+  const [year, monthNum] = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric',
+    month: '2-digit',
+    timeZone: timezone,
+  })
+    .format(now)
+    .split('-')
+    .map(Number)
+  const month = new Date(Date.UTC(year, monthNum - 1, 1))
 
   return (
     <div className="space-y-4">
