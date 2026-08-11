@@ -47,11 +47,19 @@ function luminance(hex: string): number {
 }
 
 /**
- * Decide se o texto sobre esta cor deve ser claro ou escuro, baseado na
- * luminância relativa. É o que impede a liberdade do hex livre de virar chip
- * ilegível (§5.4).
+ * Decide se o texto sobre esta cor deve ser claro ou escuro. É o que impede a
+ * liberdade do hex livre de virar chip ilegível (§5.4).
  *
  * `'light'` = use texto claro. `'dark'` = use texto escuro.
+ *
+ * O limiar é 0.45, não o ponto de virada do contraste WCAG puro (L≈0.179).
+ * Comparar contraste contra branco e contra preto é matematicamente correto
+ * mas inútil aqui: por essa conta, TODAS as doze cores da paleta pediriam
+ * texto preto — inclusive `#3B82F6`, e texto preto sobre azul-500 não é o que
+ * ninguém faz (a convenção, a do próprio Tailwind, é `bg-blue-500 text-white`).
+ * Em tons médios saturados, contraste máximo e legibilidade convencional
+ * divergem; 0.45 segue a convenção e ainda mantém amarelo e lima com texto
+ * escuro, que é onde branco realmente falharia.
  */
 export function textOn(hex: string): 'light' | 'dark' {
   const l = luminance(hex)
