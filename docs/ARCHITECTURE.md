@@ -44,13 +44,22 @@ calendario/
 │   │   ├── (public)/c/[slug]/     ← página do calendário e do evento
 │   │   ├── embed/[slug]/          ← versão para iframe
 │   │   ├── admin/[slug]/          ← gestão, conexão Google, contatos
+│   │   │   ├── layout.tsx         ← guarda + Sidebar (§7)
+│   │   │   ├── Sidebar.tsx        ← navegação do admin (`DESIGN_SYSTEM.md` §3)
+│   │   │   ├── AccessDenied.tsx   ← as quatro telas de negativa (§7)
+│   │   │   └── nav.ts             ← navGroups, activeHref
+│   │   ├── meus/                  ← calendários que a conta administra
 │   │   ├── api/calendars/[slug]/  ← events, ics, sync, upload
 │   │   ├── api/uploads/[...path]/ ← serve as imagens do volume
 │   │   ├── api/auth/[...nextauth]/
-│   │   └── login/
-│   ├── components/                ← CalendarView, MonthGrid, EventList
+│   │   ├── login/
+│   │   ├── not-found.tsx          ← 404 da raiz, com identidade e saída (`DESIGN_SYSTEM.md` §3)
+│   │   └── error.tsx              ← erro da raiz, com identidade e saída (`DESIGN_SYSTEM.md` §3)
+│   ├── components/                ← CalendarView, MonthGrid, EventList, ErrorScreen, icons
 │   ├── lib/
-│   │   ├── auth/guard.ts          ← requireCalendarAdmin
+│   │   ├── auth/access.ts         ← decideAccess (regra pura, sem banco)
+│   │   ├── auth/guard.ts          ← checkCalendarAdmin, requireCalendarAdmin
+│   │   ├── auth/actions.ts        ← signOutAction
 │   │   ├── calendar/create-calendar.ts
 │   │   ├── google/                ← client, oauth, list-events, write-event, map-event
 │   │   ├── public/                ← load-calendar, serialize, ics
@@ -209,12 +218,15 @@ Não há mais enum de área/departamento — `Label` (§4) é uma tabela por cal
 | `GET /api/calendars/[slug]/events` | JSON dos eventos publicados. CORS aberto (`Access-Control-Allow-Origin: *`). Aceita `?label=<nome>`. |
 | `GET /api/calendars/[slug]/ics` | Feed `.ics`. |
 | `GET /api/uploads/[...path]` | Serve as imagens do volume; valida contra travessia de diretório. |
+| `GET /meus` | Exige sessão (sem e-mail, `redirect('/login?next=/meus')`); lista os calendários em que o e-mail da sessão tem linha em `CalendarAdmin`, inclusive os `DISABLED` (marcados como "desativado" na tela). Fica nesta tabela por não ter guarda de admin de calendário nenhum — só exige estar logado, não administrar nada em particular. |
 
 Todas as quatro primeiras passam por `loadCalendarBySlug` (§8.2) e retornam **404** se `Calendar.status !== ACTIVE`.
 
+`/login` manda para `/meus` quando a URL não traz `?next=` — é o destino de quem acabou de entrar e quer o próprio painel, não a página pública (antecipado da Fase 5, §9 da spec).
+
 Filtro `?label=<nome>` (rotas de JSON e de embed): `parseLabelParam()` normaliza para minúsculas e apara espaços; a query casa por **nome** da label, case-insensitive (`label.is.name.equals`, `mode: 'insensitive'`). Valor vazio ou ausente é "sem filtro", não "sem resultado".
 
-### Admin (exige `requireCalendarAdmin`, §7)
+### Admin (guarda em §7 — `checkCalendarAdmin` nas páginas, `requireCalendarAdmin` nas rotas/actions)
 
 | Rota | Descrição |
 |---|---|
@@ -238,15 +250,23 @@ Server Actions em `src/app/admin/[slug]/actions.ts` (`togglePublic`, `updatePubl
 
 Auth.js (NextAuth v5) com provider Google, sessão **JWT**, sem adapter de banco (`src/auth.ts`).
 
-`requireCalendarAdmin(slug)` (`src/lib/auth/guard.ts`) é o único ponto de autorização e roda em duas etapas:
+A autorização tem duas portas sobre a mesma decisão pura, `decideAccess()` (`src/lib/auth/access.ts`): a regra não sabe de banco nem de Next, só recebe `{ calendar, email, isAdmin }` e devolve `{ ok: true }` ou `{ ok: false, reason, ... }` — o que a torna testável sem mock de sessão nem de Prisma.
 
-1. **Autenticação:** `auth()` lê a sessão. Sem e-mail na sessão → `redirect('/login?next=/admin/[slug]')`.
-2. **Autorização, sempre consultada no banco** (o token diz quem a pessoa é; nunca decide o que ela pode fazer):
-   - `Calendar` não existe ou `status !== ACTIVE` → 404.
-   - `allowedDomain` definido e e-mail não termina em `@<allowedDomain>` → 404.
-   - E-mail sem linha em `CalendarAdmin` para **aquele** `calendarId` → 404.
+- **`checkCalendarAdmin(slug)`** (`src/lib/auth/guard.ts`) consulta o banco, monta o input de `decideAccess()` e devolve `{ ok: true, calendar, email }` ou `{ ok: false, reason, email }`, com `reason ∈ { 'not-found', 'disabled', 'domain', 'not-admin' }` (mais `allowedDomain` quando `reason === 'domain'`). **Usada por página**: quem chama traduz o motivo em tela (`AccessDenied`, `src/app/admin/[slug]/AccessDenied.tsx`) em vez de abortar.
+- **`requireCalendarAdmin(slug)`** chama `checkCalendarAdmin` por baixo e aborta com `notFound()` em qualquer negativa, devolvendo só `{ calendar, email }`. **Usada por Server Action e rota de API**: ali não existe tela para renderizar, e um resultado que o chamador pudesse ignorar tornaria a autorização opcional.
 
-Login fora da allowlist do calendário (mesmo que autenticado com sucesso no Google) sempre resulta em 404, nunca em 403 — não revela se o e-mail seria válido para outro calendário.
+Sem e-mail na sessão, as duas portas continuam saindo por `redirect('/login?next=/admin/[slug]')`, antes mesmo de chegar em `decideAccess()` — não há motivo a explicar para quem ainda não entrou.
+
+A ordem das checagens dentro de `decideAccess()` é parte da regra, não acidente:
+
+1. Calendário não existe → `'not-found'`.
+2. Calendário existe mas `status !== ACTIVE` → `'disabled'`. Checado antes do domínio e da allowlist: um calendário desligado não abre nem para quem o administra.
+3. `allowedDomain` definido e e-mail não termina em `@<allowedDomain>` → `'domain'`.
+4. E-mail sem linha em `CalendarAdmin` para **aquele** `calendarId` → `'not-admin'`.
+
+Domínio é checado antes da allowlist de propósito: quando as duas falham ao mesmo tempo, o domínio é a explicação verdadeira e a única acionável por quem está do outro lado — dizer "seu e-mail não está na lista de admins" a alguém que nunca poderia estar ali por causa do domínio seria enganoso.
+
+Login fora da allowlist do calendário (mesmo autenticado com sucesso no Google) já não cai num 404 mudo: cada `reason` vira uma tela própria (`AccessDenied`, ver `PRODUCT.md` §6.1). O texto muda pelo tipo de problema: `'domain'` e `'not-admin'` citam o e-mail conectado e oferecem "Entrar com outra conta", porque o problema é a conta usada; `'not-found'` e `'disabled'` não citam e-mail nem oferecem trocar de conta — trocar de conta não resolveria nada — e só oferecem `/meus` e a página inicial. Isso deixou de ser um risco de informação porque a existência de um calendário nunca foi segredo — `/c/[slug]` é público (§6) — e o 404 mudo só custava a um admin legítimo entender que tinha entrado com a conta errada.
 
 Admin de um calendário não é automaticamente admin de outro: a checagem é sempre escopada por `calendarId`.
 
@@ -362,6 +382,8 @@ Sobe para o Google todo evento da plataforma que ainda não tem `googleEventId` 
 - Upload: valida `content-type` (JPG/PNG/WebP) e tamanho (5 MB); nome do arquivo sempre gerado (`randomUUID`), nunca o do cliente.
 - `/api/uploads/[...path]`: rejeita segmento com `..` ou `/`, e valida que o caminho resolvido continua dentro de `UPLOAD_DIR` — segunda barreira contra travessia de diretório, independente do nome gerado no upload.
 - Fluxo OAuth (`conectar/start` e `conectar/callback`): `state` aleatório em cookie `httpOnly`, comparado no callback antes de trocar qualquer `code` — protege contra OAuth CSRF.
+- `error.tsx` (raiz) mostra `error.digest`, nunca `error.message`: mensagem de exceção de servidor costuma carregar caminho de arquivo, nome de coluna e trecho de query. O `digest` é o identificador que o Next já grava no log do servidor, e é o que permite achar o erro real sem expor nada na tela.
+- `Calendar.accentColor` entra num `style` inline na sidebar do admin (`Sidebar.tsx`, `DESIGN_SYSTEM.md` §3): `isValidHex()` valida antes, com fallback para `#0F172A` se a string não for um hex válido — aceitar string arbitrária ali seria injeção de CSS. Hoje `accentColor` só é escrito pelo default do schema; a tela de aparência (Fase 3) é quem abre esse campo para input do usuário.
 - `refreshToken` fica em texto plano no banco (`GoogleConnection`). Risco aceito: o Postgres não é exposto publicamente e o token só concede escrita na agenda do clube.
 
 ## 10. Deploy

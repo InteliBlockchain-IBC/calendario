@@ -99,6 +99,24 @@ role="alert" rounded-lg border border-red-300 bg-red-50 p-4 text-sm
 
 Usado para `lastSyncError` no admin e para os erros do fluxo de conexão OAuth (`ERROS` em `conectar/page.tsx`).
 
+### Sidebar do admin
+
+`src/app/admin/[slug]/Sidebar.tsx`. Coluna `w-60` (`w-14` colapsada), `border-r`. Rótulo de grupo: `text-[11px] font-semibold uppercase tracking-wide opacity-50`. Item de navegação: `flex items-center gap-2 rounded-lg px-2 py-2 text-sm`, inativo com `hover:bg-neutral-100`, ativo com `style={{ backgroundColor: accent + '1a', color: accent }}` — wash de ~10% (sufixo `1a` é o canal alfa do hex de 8 dígitos) da cor de destaque do calendário (`Calendar.accentColor`), validada por `isValidHex` antes de entrar no `style` (`ARCHITECTURE.md` §9). Rodapé com e-mail da conta e botão "Sair". Abaixo de `md`, vira drawer (`fixed inset-0 z-50`) acionado por um botão de menu no topo.
+
+### Ícones
+
+`src/components/icons.tsx`. Sete SVGs de 16px próprios, `stroke="currentColor"`, `strokeWidth: 1.5`: `CalendarIcon`/`UsersIcon`/`LinkIcon` (itens da navegação, mapeados em `NAV_ICONS`) e `ChevronLeftIcon`/`ChevronRightIcon`/`MenuIcon`/`CloseIcon` (colapso e drawer da sidebar).
+
+### Tela de parede
+
+`src/components/ErrorScreen.tsx`. Casca de toda tela sem conteúdo — 404, erro, e as quatro telas de negativa do admin (`AccessDenied.tsx`):
+
+```
+mx-auto flex min-h-screen max-w-md flex-col justify-center gap-4 p-6 text-center
+```
+
+Título, texto opcional (`text-sm opacity-70`) e uma área de ações. `PRIMARY_BUTTON`/`SECONDARY_BUTTON` são exportados do mesmo arquivo — as classes de botão primário/secundário (acima) já eram repetidas inline em cada tela; aqui viraram constante única para as telas de saída.
+
 ## 4. Cor por label — estado real
 
 O enum fixo `Area` (departamentos do clube) foi substituído pela tabela `Label` por calendário, com cor própria (`ARCHITECTURE.md` §4, §4.1). A cor final de um evento é resolvida no servidor (`colorOverride ?? label.color ?? calendar.accentColor`) e já chega pronta em `PublicEvent.color`.
@@ -108,6 +126,6 @@ Hoje essa cor só é usada na **lista** (`EventList.tsx`): o ponto ao lado do no
 ## 5. O que não existe (de propósito, por ora)
 
 - Dark mode aplicado de fato às telas do produto: só o esqueleto (`globals.css` `@media (prefers-color-scheme: dark)`) existe; nenhuma tela testa contraste no escuro.
-- Ícones (nenhuma biblioteca de ícones está instalada).
+- Biblioteca de ícones: nenhuma está instalada. `src/components/icons.tsx` (§3) tem sete SVGs próprios para a navegação do admin, feitos à mão — não é o mesmo que ter um pacote de ícones geral disponível para qualquer tela.
 - Animações além de `transition` no hover do card.
 - Componente de botão/input reutilizável — cada tela escreve as classes Tailwind inline. Com o inventário de componentes deste tamanho (um card, uma grade, dois botões), extrair um componente compartilhado seria abstração sem uso hoje.
