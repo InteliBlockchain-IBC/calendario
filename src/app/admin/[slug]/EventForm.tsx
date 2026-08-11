@@ -6,9 +6,11 @@ import { createEvent } from './actions'
 export function EventForm({
   slug,
   contactEmails,
+  isConnected,
 }: {
   slug: string
   contactEmails: string[]
+  isConnected: boolean
 }) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -36,12 +38,17 @@ export function EventForm({
           endsAt: new Date(String(formData.get('endsAt'))),
           allDay,
           location: (formData.get('location') as string) || null,
-          attendeeEmails: String(formData.get('attendees') ?? '')
-            .split(/[,\s]+/)
-            .map((e) => e.trim())
-            .filter(Boolean),
+          // Sem conexão com o Google não há mecanismo de convite: mesmo que
+          // os campos estejam escondidos, não confiamos em FormData não
+          // trazer os names — enviamos vazio/false explicitamente.
+          attendeeEmails: isConnected
+            ? String(formData.get('attendees') ?? '')
+                .split(/[,\s]+/)
+                .map((e) => e.trim())
+                .filter(Boolean)
+            : [],
         },
-        formData.get('notify') === 'on',
+        isConnected && formData.get('notify') === 'on',
       )
       setOpen(false)
     } catch (e) {
@@ -79,24 +86,30 @@ export function EventForm({
         placeholder="Descrição (vai para o Google)"
         className="w-full rounded border p-2"
       />
-      <div>
-        <input
-          name="attendees"
-          list="contatos"
-          placeholder="Convidados: e-mails separados por vírgula"
-          className="w-full rounded border p-2"
-        />
-        <datalist id="contatos">
-          {contactEmails.map((email) => (
-            <option key={email} value={email} />
-          ))}
-        </datalist>
-      </div>
-      {/* Ligado por padrão ao CRIAR: criar sem avisar torna o convite
-          inútil. Ao editar, o padrão é desligado (§6.7). */}
-      <label className="flex items-center gap-2 text-sm">
-        <input name="notify" type="checkbox" defaultChecked /> Notificar convidados por e-mail
-      </label>
+      {isConnected && (
+        <div>
+          <input
+            name="attendees"
+            list="contatos"
+            placeholder="Convidados: e-mails separados por vírgula"
+            className="w-full rounded border p-2"
+          />
+          <datalist id="contatos">
+            {contactEmails.map((email) => (
+              <option key={email} value={email} />
+            ))}
+          </datalist>
+        </div>
+      )}
+      {/* Convite é um mecanismo do Google: sem conexão não há como
+          notificar, então o campo some em vez de prometer algo que não
+          acontece. Ligado por padrão ao CRIAR: criar sem avisar torna o
+          convite inútil. Ao editar, o padrão é desligado (§6.7). */}
+      {isConnected && (
+        <label className="flex items-center gap-2 text-sm">
+          <input name="notify" type="checkbox" defaultChecked /> Notificar convidados por e-mail
+        </label>
+      )}
 
       {error && <p className="text-sm text-red-700">{error}</p>}
 

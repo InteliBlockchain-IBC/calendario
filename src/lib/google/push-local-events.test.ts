@@ -58,6 +58,27 @@ describe('pushEvents', () => {
     expect(save).not.toHaveBeenCalledWith('b', expect.anything())
   })
 
+  it('save falhando depois de um push bem-sucedido conta failed e o lote continua', async () => {
+    const push = vi.fn(async (e: LocalEvent) => `g-${e.id}`)
+    const save = vi.fn(async (eventId: string) => {
+      if (eventId === 'b') throw new Error('banco indisponível')
+    })
+
+    const result = await pushEvents(
+      [localEvent('a'), localEvent('b'), localEvent('c')],
+      push,
+      save,
+    )
+
+    // O evento 'b' foi criado no Google (push teve sucesso) mas não foi
+    // gravado localmente (save falhou): é o caso órfão, contado em failed.
+    expect(result).toEqual({ pushed: 2, failed: 1 })
+    expect(push).toHaveBeenCalledTimes(3)
+    expect(save).toHaveBeenCalledWith('a', 'g-a')
+    expect(save).toHaveBeenCalledWith('b', 'g-b')
+    expect(save).toHaveBeenCalledWith('c', 'g-c')
+  })
+
   it('lista vazia não chama o Google', async () => {
     const push = vi.fn()
     const result = await pushEvents([], push, async () => {})

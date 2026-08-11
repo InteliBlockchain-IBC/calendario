@@ -18,7 +18,7 @@ export type PushResult = { pushed: number; failed: number }
  * de propósito — o limite do Google é por usuário, e um lote paralelo de
  * dezenas de eventos o estoura. Uma falha individual é contada e o lote
  * continua: como só toca eventos ainda sem googleEventId, repetir resolve o
- * que ficou para trás (§5.3).
+ * que ficou para trás (ARCHITECTURE.md §8.7).
  */
 export async function pushEvents(
   events: LocalEvent[],
@@ -29,12 +29,27 @@ export async function pushEvents(
   let failed = 0
 
   for (const event of events) {
+    let googleEventId: string
     try {
-      const googleEventId = await push(event)
+      googleEventId = await push(event)
+    } catch (error) {
+      failed++
+      console.error(`Falha ao enviar o evento ${event.id} para o Google:`, error)
+      continue
+    }
+
+    try {
       await save(event.id, googleEventId)
       pushed++
-    } catch {
+    } catch (error) {
       failed++
+      // Pior caso do lote: o evento existe no Google mas continua sem
+      // googleEventId aqui. Repetir criaria uma duplicata na agenda real,
+      // então isto precisa ser visível em vez de virar só um número.
+      console.error(
+        `ÓRFÃO: evento ${event.id} criado no Google como ${googleEventId}, mas não gravado localmente:`,
+        error,
+      )
     }
   }
 

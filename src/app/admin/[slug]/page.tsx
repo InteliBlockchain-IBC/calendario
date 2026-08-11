@@ -33,7 +33,11 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
       </header>
 
       <div className="flex items-center gap-2">
-        <EventForm slug={slug} contactEmails={contacts.map((c) => c.email)} />
+        <EventForm
+          slug={slug}
+          contactEmails={contacts.map((c) => c.email)}
+          isConnected={Boolean(calendar.googleCalendarId)}
+        />
         <form
           action={async () => {
             'use server'

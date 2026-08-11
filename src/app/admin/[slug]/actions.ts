@@ -3,18 +3,20 @@
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/db'
 import { requireCalendarAdmin } from '@/lib/auth/guard'
+import { isValidHex } from '@/lib/labels/palette'
 
 export type PublicFields = {
   publicTitle: string | null
   publicDescription: string | null
   imageUrl: string | null
   labelId: string | null
+  colorOverride: string | null
   signupUrl: string | null
 }
 
 /**
  * Estas actions mexem SÓ em campos da plataforma. Não chamam o Google, porque
- * nada aqui existe do lado de lá (§6.1).
+ * nada aqui existe do lado de lá (ARCHITECTURE.md §8.1).
  */
 export async function togglePublic(slug: string, eventId: string, isPublic: boolean) {
   const { calendar } = await requireCalendarAdmin(slug)
@@ -30,6 +32,21 @@ export async function togglePublic(slug: string, eventId: string, isPublic: bool
 
 export async function updatePublicFields(slug: string, eventId: string, fields: PublicFields) {
   const { calendar } = await requireCalendarAdmin(slug)
+
+  // labelId cru é uma FK sem restrição de inquilino: sem esta checagem, um
+  // admin do calendário A poderia apontar um evento seu para uma label do
+  // calendário B, e o nome/cor de B vazariam na saída pública de A.
+  if (fields.labelId) {
+    await prisma.label.findFirstOrThrow({
+      where: { id: fields.labelId, calendarId: calendar.id },
+    })
+  }
+
+  // colorOverride vai para um `style` inline na saída pública — aceitar
+  // string arbitrária ali é injeção de CSS (ver isValidHex em palette.ts).
+  if (fields.colorOverride && !isValidHex(fields.colorOverride)) {
+    throw new Error('Cor inválida.')
+  }
 
   await prisma.event.update({
     where: { id: eventId, calendarId: calendar.id },
@@ -50,8 +67,8 @@ import {
 /**
  * Duas escritas possíveis. Com o Google conectado, ele é chamado ANTES de
  * gravar: se falhar, a exceção sobe e nada vai para o banco — um evento nunca
- * existe só de um lado (§6.1 da spec anterior). Sem conexão, grava só aqui,
- * com googleEventId nulo (§5.2).
+ * existe só de um lado (ARCHITECTURE.md §8.1). Sem conexão, grava só aqui,
+ * com googleEventId nulo (ARCHITECTURE.md §8.1).
  */
 export async function createEvent(slug: string, draft: EventDraft, notify: boolean) {
   const { calendar } = await requireCalendarAdmin(slug)
@@ -117,7 +134,7 @@ export async function updateGoogleFields(
   })
 
   // Ramifica no EVENTO, não no calendário: um calendário conectado pode
-  // conter eventos locais, e dar patch neles quebraria (§5.2).
+  // conter eventos locais, e dar patch neles quebraria (ARCHITECTURE.md §8.1).
   if (event.googleEventId && calendar.googleCalendarId) {
     const google = await updateGoogleEvent({
       calendarId: calendar.id,
@@ -187,7 +204,8 @@ export async function deleteEvent(slug: string, eventId: string, notify: boolean
 /**
  * Contato nasce do uso: e-mail digitado num evento vira contato sem nome, que
  * o admin completa depois. Não existe cadastro prévio a ser feito antes de a
- * ferramenta ser útil — que é justamente o passo que ninguém dá (§6.7).
+ * ferramenta ser útil — que é justamente o passo que ninguém dá
+ * (ARCHITECTURE.md §4, `Contact`).
  */
 async function upsertContactsFromEmails(calendarId: string, emails: string[]) {
   if (emails.length === 0) return
