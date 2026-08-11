@@ -37,6 +37,7 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
           slug={slug}
           contactEmails={contacts.map((c) => c.email)}
           isConnected={Boolean(calendar.googleCalendarId)}
+          timezone={calendar.timezone}
         />
         <form
           action={async () => {

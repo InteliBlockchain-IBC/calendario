@@ -2,15 +2,19 @@
 
 import { useState } from 'react'
 import { createEvent } from './actions'
+import { fromLocalInput } from '@/lib/datetime/local-input'
 
 export function EventForm({
   slug,
   contactEmails,
   isConnected,
+  timezone,
 }: {
   slug: string
   contactEmails: string[]
   isConnected: boolean
+  /** Fuso do calendário: é nele que os horários digitados são lidos. */
+  timezone: string
 }) {
   const [open, setOpen] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -34,8 +38,11 @@ export function EventForm({
         {
           title: String(formData.get('title')),
           description: (formData.get('description') as string) || null,
-          startsAt: new Date(String(formData.get('startsAt'))),
-          endsAt: new Date(String(formData.get('endsAt'))),
+          // O texto do input é hora de parede no fuso do CALENDÁRIO. Ler com
+          // `new Date(texto)` usaria o fuso do navegador de quem preenche, e o
+          // evento nasceria deslocado na agenda do clube.
+          startsAt: fromLocalInput(String(formData.get('startsAt')), timezone),
+          endsAt: fromLocalInput(String(formData.get('endsAt')), timezone),
           allDay,
           location: (formData.get('location') as string) || null,
           // Sem conexão com o Google não há mecanismo de convite: mesmo que

@@ -271,6 +271,8 @@ Chamadas ao Google, quando acontecem:
 
 A lista de convidados vai no campo `attendees` do payload; `sendUpdates` (`'all'` ou `'none'`) decide se o Google dispara e-mail. Padrão: **ligado ao criar**, **desligado ao editar**. O checkbox "Notificar convidados por e-mail" existe hoje na tela de **criar** evento (`EventForm`); não há tela de editar para inverter o padrão nela ainda.
 
+**Horário digitado é lido no fuso do calendário, não no do navegador.** O `<input type="datetime-local">` produz hora de parede sem fuso (`'2026-08-12T19:00'`), e `new Date(texto)` a interpretaria no fuso de quem preenche: um admin acessando de outro fuso criaria o evento deslocado na agenda do clube (digitar 19:00 em Lisboa gravava 18:00 UTC, que é 15:00 em São Paulo). `fromLocalInput`/`toLocalInput` (`src/lib/datetime/local-input.ts`) fazem a conversão nos dois sentidos usando `Calendar.timezone`, e é por elas que todo campo de data do admin passa. Mesma precaução que `dateInTimezone` já tomava no payload de evento de dia inteiro (§8.1, `write-event.ts`). Os testes cobrem fuso com e sem horário de verão e são independentes do fuso da máquina que os roda.
+
 ### 8.2 Volta — Google → plataforma: duas portas de disparo
 
 Ambas chamam o mesmo `runSync(calendarId, mode)` (`src/lib/sync/run-sync.ts`).
