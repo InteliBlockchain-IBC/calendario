@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
@@ -26,6 +27,11 @@ export default async function EventPage({
 
   return (
     <main className="mx-auto max-w-2xl space-y-6 p-6">
+      {/* Esta é a página que se compartilha, e era o beco sem saída mais
+          visitado do produto: sem signupUrl não tinha link nenhum (§1). */}
+      <Link href={`/c/${slug}`} className="inline-block text-sm underline opacity-70">
+        ← Voltar ao calendário
+      </Link>
       {event.imageUrl && (
         // eslint-disable-next-line @next/next/no-img-element
         <img src={event.imageUrl} alt="" className="w-full rounded-xl" />
