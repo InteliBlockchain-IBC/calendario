@@ -30,9 +30,11 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{calendar.name}</h1>
-        <span className="text-sm opacity-60">/{calendar.slug}</span>
+      <header className="flex items-baseline justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Eventos</h1>
+        <a href={`/c/${calendar.slug}`} className="text-sm underline opacity-60">
+          ver página pública
+        </a>
       </header>
 
       <div className="flex items-center gap-2">
