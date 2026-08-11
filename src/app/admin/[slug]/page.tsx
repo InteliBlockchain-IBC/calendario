@@ -1,11 +1,14 @@
-import { requireCalendarAdmin } from '@/lib/auth/guard'
+import { checkCalendarAdmin, requireCalendarAdmin } from '@/lib/auth/guard'
 import { prisma } from '@/lib/db'
+import { AccessDenied } from './AccessDenied'
 import { togglePublic } from './actions'
 import { EventForm } from './EventForm'
 
 export default async function AdminPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const { calendar } = await requireCalendarAdmin(slug)
+  const access = await checkCalendarAdmin(slug)
+  if (!access.ok) return <AccessDenied access={access} slug={slug} />
+  const { calendar } = access
 
   const events = await prisma.event.findMany({
     where: { calendarId: calendar.id, startsAt: { gte: new Date() } },

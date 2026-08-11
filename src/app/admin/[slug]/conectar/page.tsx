@@ -1,7 +1,8 @@
 import Link from 'next/link'
-import { requireCalendarAdmin } from '@/lib/auth/guard'
+import { checkCalendarAdmin } from '@/lib/auth/guard'
 import { prisma } from '@/lib/db'
 import { getCalendarClient } from '@/lib/google/client'
+import { AccessDenied } from '../AccessDenied'
 import { selectGoogleCalendar } from './actions'
 
 const ERROS: Record<string, string> = {
@@ -22,7 +23,9 @@ export default async function ConectarPage({
 }) {
   const { slug } = await params
   const { erro } = await searchParams
-  const { calendar } = await requireCalendarAdmin(slug)
+  const access = await checkCalendarAdmin(slug)
+  if (!access.ok) return <AccessDenied access={access} slug={slug} />
+  const { calendar } = access
 
   const connection = await prisma.googleConnection.findUnique({
     where: { calendarId: calendar.id },

@@ -1,10 +1,13 @@
-import { requireCalendarAdmin } from '@/lib/auth/guard'
+import { checkCalendarAdmin } from '@/lib/auth/guard'
 import { prisma } from '@/lib/db'
+import { AccessDenied } from '../AccessDenied'
 import { deleteContact } from './actions'
 
 export default async function ContatosPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const { calendar } = await requireCalendarAdmin(slug)
+  const access = await checkCalendarAdmin(slug)
+  if (!access.ok) return <AccessDenied access={access} slug={slug} />
+  const { calendar } = access
 
   const contacts = await prisma.contact.findMany({
     where: { calendarId: calendar.id },
