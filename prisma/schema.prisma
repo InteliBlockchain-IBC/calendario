@@ -7,14 +7,6 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-enum Area {
-  EDUCATIONAL
-  PROJECTS
-  MARKETING
-  PEOPLE
-  GENERAL
-}
-
 enum EventStatus {
   CONFIRMED
   CANCELLED
@@ -39,6 +31,7 @@ model Calendar {
   lastSyncedAt     DateTime?
   syncingAt        DateTime?
   lastSyncError    String?
+  accentColor      String         @default("#0F172A")
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
 
@@ -47,6 +40,19 @@ model Calendar {
   events           Event[]
   contacts         Contact[]
   contactGroups    ContactGroup[]
+  labels           Label[]
+}
+
+model Label {
+  id         String @id @default(uuid())
+  calendarId String
+  name       String
+  color      String
+
+  calendar Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  events   Event[]
+
+  @@unique([calendarId, name])
 }
 
 model GoogleConnection {
@@ -100,7 +106,7 @@ model Event {
   calendarId String
 
   // --- Campos do Google: sobrescritos a cada sync ---
-  googleEventId    String
+  googleEventId    String?
   title            String
   description      String?
   startsAt         DateTime
@@ -116,7 +122,8 @@ model Event {
   publicTitle       String?
   publicDescription String?
   imageUrl          String?
-  area              Area?
+  labelId           String?
+  colorOverride     String?
   signupUrl         String?
 
   createdAt DateTime  @default(now())
@@ -124,6 +131,7 @@ model Event {
   syncedAt  DateTime?
 
   calendar Calendar @relation(fields: [calendarId], references: [id], onDelete: Cascade)
+  label    Label?   @relation(fields: [labelId], references: [id], onDelete: SetNull)
 
   @@unique([calendarId, googleEventId])
   @@index([calendarId, startsAt])

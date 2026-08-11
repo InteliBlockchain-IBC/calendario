@@ -61,7 +61,8 @@ describe('reconcile', () => {
       'publicTitle',
       'publicDescription',
       'imageUrl',
-      'area',
+      'labelId',
+      'colorOverride',
       'signupUrl',
     ]) {
       expect(created).not.toHaveProperty(platformField)
@@ -87,7 +88,8 @@ describe('reconcile', () => {
       'publicTitle',
       'publicDescription',
       'imageUrl',
-      'area',
+      'labelId',
+      'colorOverride',
       'signupUrl',
     ]) {
       expect(data).not.toHaveProperty(platformField)

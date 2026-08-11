@@ -1,23 +1,10 @@
 import type { Prisma } from '@prisma/client'
-import { Area } from '@prisma/client'
-
-/**
- * `?area=` de rota pública vem de query string — texto arbitrário do usuário,
- * não um `Area` validado pelo TypeScript. Um valor que não bate com o enum
- * (ex.: `?area=lixo`) faz o Prisma lançar e a rota devolve 500 sem essa
- * checagem; filtrar aqui faz o valor inválido virar "sem filtro" em vez de erro.
- */
-export function parseAreaParam(value: string | null | undefined): Area | undefined {
-  const upper = value?.toUpperCase()
-  return upper && (Object.values(Area) as string[]).includes(upper) ? (upper as Area) : undefined
-}
 
 /**
  * `select` único para toda consulta pública de evento. `attendees` e a
  * `description` crua do Google ficam de fora por construção — nunca chegam
  * à memória do servidor. Regra de consulta *e* de tipo, não de renderização
- * (§8, CLAUDE.md regra 2): uma única lista de campos, reusada em toda rota
- * pública, para não duplicá-la (e arriscar divergir) em cinco lugares.
+ * (§8, CLAUDE.md regra 2).
  */
 export const publicEventSelect = {
   id: true,
@@ -28,7 +15,6 @@ export const publicEventSelect = {
   endsAt: true,
   allDay: true,
   location: true,
-  area: true,
   imageUrl: true,
   signupUrl: true,
   status: true,
@@ -51,7 +37,6 @@ export type PublicEvent = {
   endsAt: string
   allDay: boolean
   location: string | null
-  area: Area | null
   imageUrl: string | null
   signupUrl: string | null
 }
@@ -67,7 +52,6 @@ export function toPublicEvent(event: PublicEventSource): PublicEvent {
     endsAt: event.endsAt.toISOString(),
     allDay: event.allDay,
     location: event.location,
-    area: event.area,
     imageUrl: event.imageUrl,
     signupUrl: event.signupUrl,
   }

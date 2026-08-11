@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent, publicEventSelect, parseAreaParam } from '@/lib/public/serialize'
+import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
 import { CalendarView } from '@/components/CalendarView'
 
 export default async function EmbedPage({
@@ -11,10 +11,8 @@ export default async function EmbedPage({
   searchParams: Promise<{ view?: string; area?: string }>
 }) {
   const { slug } = await params
-  const { view, area } = await searchParams
+  const { view } = await searchParams
   const calendar = await loadCalendarBySlug(slug)
-
-  const normalizedArea = parseAreaParam(area)
 
   const events = await prisma.event.findMany({
     where: {
@@ -22,7 +20,6 @@ export default async function EmbedPage({
       isPublic: true,
       status: 'CONFIRMED',
       endsAt: { gte: new Date() },
-      ...(normalizedArea ? { area: normalizedArea } : {}),
     },
     orderBy: { startsAt: 'asc' },
     select: publicEventSelect,

@@ -1,14 +1,6 @@
 import Link from 'next/link'
 import type { PublicEvent } from '@/lib/public/serialize'
 
-const AREA_LABEL: Record<string, string> = {
-  EDUCATIONAL: 'Educacional',
-  PROJECTS: 'Projetos',
-  MARKETING: 'Marketing',
-  PEOPLE: 'Pessoas',
-  GENERAL: 'Geral',
-}
-
 export function EventList({
   events,
   timezone,
@@ -50,11 +42,6 @@ export function EventList({
                   {event.allDay ? 'Dia inteiro' : time.format(start)}
                   {event.location && ` · ${event.location}`}
                 </p>
-                {event.area && (
-                  <span className="mt-1 inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs">
-                    {AREA_LABEL[event.area]}
-                  </span>
-                )}
               </div>
             </Link>
           </li>

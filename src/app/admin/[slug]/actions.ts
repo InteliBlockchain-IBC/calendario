@@ -3,13 +3,12 @@
 import { revalidatePath } from 'next/cache'
 import { prisma } from '@/lib/db'
 import { requireCalendarAdmin } from '@/lib/auth/guard'
-import type { Area } from '@prisma/client'
 
 export type PublicFields = {
   publicTitle: string | null
   publicDescription: string | null
   imageUrl: string | null
-  area: Area | null
+  labelId: string | null
   signupUrl: string | null
 }
 
@@ -99,6 +98,11 @@ export async function updateGoogleFields(
     where: { id: eventId, calendarId: calendar.id },
   })
 
+  // Temporário: a Task 5 troca isto pela ramificação local vs. espelhado.
+  if (!event.googleEventId) {
+    throw new Error('Este evento não está espelhado no Google.')
+  }
+
   const google = await updateGoogleEvent({
     calendarId: calendar.id,
     googleCalendarId: calendar.googleCalendarId,
@@ -135,6 +139,11 @@ export async function deleteEvent(slug: string, eventId: string, notify: boolean
   const event = await prisma.event.findFirstOrThrow({
     where: { id: eventId, calendarId: calendar.id },
   })
+
+  // Temporário: a Task 5 troca isto pela ramificação local vs. espelhado.
+  if (!event.googleEventId) {
+    throw new Error('Este evento não está espelhado no Google.')
+  }
 
   await deleteGoogleEvent({
     calendarId: calendar.id,

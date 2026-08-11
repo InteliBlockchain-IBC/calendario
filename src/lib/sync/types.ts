@@ -1,4 +1,4 @@
-import type { Area, EventStatus } from '@prisma/client'
+import type { EventStatus } from '@prisma/client'
 
 export type Attendee = {
   email: string

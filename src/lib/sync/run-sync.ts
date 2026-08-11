@@ -41,10 +41,15 @@ export async function runSync(
       updatedMin: mode === 'incremental' ? calendar.lastSyncedAt : null,
     })
 
-    const existing: ExistingEvent[] = await prisma.event.findMany({
-      where: { calendarId },
-      select: { id: true, googleEventId: true, startsAt: true, status: true },
-    })
+    // `googleEventId` agora é opcional no schema (eventos locais, Task 4). A
+    // reconciliação só conhece eventos espelhados no Google — filtra aqui.
+    // Temporário: a Task 4 extrai isto para uma `toExistingEvents()` testada.
+    const existing: ExistingEvent[] = (
+      await prisma.event.findMany({
+        where: { calendarId },
+        select: { id: true, googleEventId: true, startsAt: true, status: true },
+      })
+    ).filter((event): event is typeof event & { googleEventId: string } => event.googleEventId !== null)
 
     const result = reconcile({ incoming, existing, mode, window })
 
