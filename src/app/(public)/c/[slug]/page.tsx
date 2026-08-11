@@ -1,3 +1,4 @@
+import Link from 'next/link'
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
 import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
@@ -20,7 +21,14 @@ export default async function CalendarPage({ params }: { params: Promise<{ slug:
 
   return (
     <main className="mx-auto max-w-3xl space-y-6 p-6">
-      <h1 className="text-2xl font-semibold">{calendar.name}</h1>
+      <header className="flex items-baseline justify-between gap-3">
+        <h1 className="text-2xl font-semibold">{calendar.name}</h1>
+        {/* Visitante não precisa disso; é a única porta de entrada para quem
+            administra e chegou por aqui, não por /admin/<slug> direto. */}
+        <Link href="/login" className="text-sm underline opacity-60">
+          Entrar
+        </Link>
+      </header>
       <CalendarView
         events={events.map((event) => toPublicEvent(event, calendar))}
         timezone={calendar.timezone}

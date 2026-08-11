@@ -1,11 +1,14 @@
-import { requireCalendarAdmin } from '@/lib/auth/guard'
+import { checkCalendarAdmin, requireCalendarAdmin } from '@/lib/auth/guard'
 import { prisma } from '@/lib/db'
+import { AccessDenied } from './AccessDenied'
 import { togglePublic } from './actions'
 import { EventForm } from './EventForm'
 
 export default async function AdminPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
-  const { calendar } = await requireCalendarAdmin(slug)
+  const access = await checkCalendarAdmin(slug)
+  if (!access.ok) return <AccessDenied access={access} slug={slug} />
+  const { calendar } = access
 
   const events = await prisma.event.findMany({
     where: { calendarId: calendar.id, startsAt: { gte: new Date() } },
@@ -27,9 +30,11 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
 
   return (
     <main className="mx-auto max-w-4xl space-y-6 p-6">
-      <header className="flex items-baseline justify-between">
-        <h1 className="text-2xl font-semibold">{calendar.name}</h1>
-        <span className="text-sm opacity-60">/{calendar.slug}</span>
+      <header className="flex items-baseline justify-between gap-3">
+        <h1 className="text-2xl font-semibold">Eventos</h1>
+        <a href={`/c/${calendar.slug}`} className="text-sm underline opacity-60">
+          ver página pública
+        </a>
       </header>
 
       <div className="flex items-center gap-2">
@@ -39,21 +44,33 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
           isConnected={Boolean(calendar.googleCalendarId)}
           timezone={calendar.timezone}
         />
-        <form
-          action={async () => {
-            'use server'
-            // A Server Action é um endpoint HTTP por si só — o check no
-            // render da página não protege a invocação direta da action,
-            // por isso repete aqui (mesmo padrão de togglePublic/deleteContact).
-            await requireCalendarAdmin(slug)
-            const { runSync } = await import('@/lib/sync/run-sync')
-            await runSync(calendar.id, 'full')
-          }}
-        >
-          <button type="submit" className="rounded-lg border px-4 py-2">
-            Sincronizar agora
-          </button>
-        </form>
+        {calendar.googleCalendarId ? (
+          <form
+            action={async () => {
+              'use server'
+              // A Server Action é um endpoint HTTP por si só — o check no
+              // render da página não protege a invocação direta da action,
+              // por isso repete aqui (mesmo padrão de togglePublic/deleteContact).
+              const { calendar } = await requireCalendarAdmin(slug)
+              // Guarda contra a mesma invocação direta: o botão só existe
+              // quando conectado, mas a action ainda pode ser chamada sem
+              // passar pela tela — sem isso, runSync lança um erro que a
+              // Server Action não trata e a exceção sobe crua até a tela
+              // genérica de erro em vez de uma mensagem de verdade.
+              if (!calendar.googleCalendarId) return
+              const { runSync } = await import('@/lib/sync/run-sync')
+              await runSync(calendar.id, 'full')
+            }}
+          >
+            <button type="submit" className="rounded-lg border px-4 py-2">
+              Sincronizar agora
+            </button>
+          </form>
+        ) : (
+          <a href={`/admin/${slug}/conectar`} className="text-sm underline opacity-60">
+            conectar agenda do Google para sincronizar
+          </a>
+        )}
       </div>
 
       {calendar.lastSyncError && (
