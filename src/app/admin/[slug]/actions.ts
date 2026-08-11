@@ -48,37 +48,56 @@ import {
 } from '@/lib/google/write-event'
 
 /**
- * O Google é chamado ANTES de gravar. Se ele falhar, a exceção sobe e nada é
- * escrito no banco — um evento nunca existe só de um lado (§6.1).
+ * Duas escritas possíveis. Com o Google conectado, ele é chamado ANTES de
+ * gravar: se falhar, a exceção sobe e nada vai para o banco — um evento nunca
+ * existe só de um lado (§6.1 da spec anterior). Sem conexão, grava só aqui,
+ * com googleEventId nulo (§5.2).
  */
 export async function createEvent(slug: string, draft: EventDraft, notify: boolean) {
   const { calendar } = await requireCalendarAdmin(slug)
-  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
 
-  const google = await createGoogleEvent({
-    calendarId: calendar.id,
-    googleCalendarId: calendar.googleCalendarId,
-    timezone: calendar.timezone,
-    draft,
-    notify,
-  })
-
-  await prisma.event.create({
-    data: {
+  if (calendar.googleCalendarId) {
+    const google = await createGoogleEvent({
       calendarId: calendar.id,
-      googleEventId: google.googleEventId,
-      title: google.title,
-      description: google.description,
-      startsAt: google.startsAt,
-      endsAt: google.endsAt,
-      allDay: google.allDay,
-      location: google.location,
-      status: google.status,
-      recurringEventId: google.recurringEventId,
-      attendees: google.attendees,
-      syncedAt: new Date(),
-    },
-  })
+      googleCalendarId: calendar.googleCalendarId,
+      timezone: calendar.timezone,
+      draft,
+      notify,
+    })
+
+    await prisma.event.create({
+      data: {
+        calendarId: calendar.id,
+        googleEventId: google.googleEventId,
+        title: google.title,
+        description: google.description,
+        startsAt: google.startsAt,
+        endsAt: google.endsAt,
+        allDay: google.allDay,
+        location: google.location,
+        status: google.status,
+        recurringEventId: google.recurringEventId,
+        attendees: google.attendees,
+        syncedAt: new Date(),
+      },
+    })
+  } else {
+    await prisma.event.create({
+      data: {
+        calendarId: calendar.id,
+        googleEventId: null,
+        title: draft.title,
+        description: draft.description,
+        startsAt: draft.startsAt,
+        endsAt: draft.endsAt,
+        allDay: draft.allDay,
+        location: draft.location,
+        status: 'CONFIRMED',
+        recurringEventId: null,
+        attendees: [],
+      },
+    })
+  }
 
   await upsertContactsFromEmails(calendar.id, draft.attendeeEmails)
   revalidatePath(`/admin/${slug}`)
@@ -92,40 +111,50 @@ export async function updateGoogleFields(
   notify: boolean,
 ) {
   const { calendar } = await requireCalendarAdmin(slug)
-  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
 
   const event = await prisma.event.findFirstOrThrow({
     where: { id: eventId, calendarId: calendar.id },
   })
 
-  // Temporário: a Task 5 troca isto pela ramificação local vs. espelhado.
-  if (!event.googleEventId) {
-    throw new Error('Este evento não está espelhado no Google.')
+  // Ramifica no EVENTO, não no calendário: um calendário conectado pode
+  // conter eventos locais, e dar patch neles quebraria (§5.2).
+  if (event.googleEventId && calendar.googleCalendarId) {
+    const google = await updateGoogleEvent({
+      calendarId: calendar.id,
+      googleCalendarId: calendar.googleCalendarId,
+      googleEventId: event.googleEventId,
+      timezone: calendar.timezone,
+      draft,
+      notify,
+    })
+
+    await prisma.event.update({
+      where: { id: eventId },
+      data: {
+        title: google.title,
+        description: google.description,
+        startsAt: google.startsAt,
+        endsAt: google.endsAt,
+        allDay: google.allDay,
+        location: google.location,
+        status: google.status,
+        attendees: google.attendees,
+        syncedAt: new Date(),
+      },
+    })
+  } else {
+    await prisma.event.update({
+      where: { id: eventId },
+      data: {
+        title: draft.title,
+        description: draft.description,
+        startsAt: draft.startsAt,
+        endsAt: draft.endsAt,
+        allDay: draft.allDay,
+        location: draft.location,
+      },
+    })
   }
-
-  const google = await updateGoogleEvent({
-    calendarId: calendar.id,
-    googleCalendarId: calendar.googleCalendarId,
-    googleEventId: event.googleEventId,
-    timezone: calendar.timezone,
-    draft,
-    notify,
-  })
-
-  await prisma.event.update({
-    where: { id: eventId },
-    data: {
-      title: google.title,
-      description: google.description,
-      startsAt: google.startsAt,
-      endsAt: google.endsAt,
-      allDay: google.allDay,
-      location: google.location,
-      status: google.status,
-      attendees: google.attendees,
-      syncedAt: new Date(),
-    },
-  })
 
   await upsertContactsFromEmails(calendar.id, draft.attendeeEmails)
   revalidatePath(`/admin/${slug}`)
@@ -134,23 +163,21 @@ export async function updateGoogleFields(
 
 export async function deleteEvent(slug: string, eventId: string, notify: boolean) {
   const { calendar } = await requireCalendarAdmin(slug)
-  if (!calendar.googleCalendarId) throw new Error('Calendário não conectado ao Google.')
 
   const event = await prisma.event.findFirstOrThrow({
     where: { id: eventId, calendarId: calendar.id },
   })
 
-  // Temporário: a Task 5 troca isto pela ramificação local vs. espelhado.
-  if (!event.googleEventId) {
-    throw new Error('Este evento não está espelhado no Google.')
+  // Google primeiro: se a exclusão lá falhar, o evento continua nos dois
+  // lados em vez de sumir só daqui e reaparecer no próximo sync.
+  if (event.googleEventId && calendar.googleCalendarId) {
+    await deleteGoogleEvent({
+      calendarId: calendar.id,
+      googleCalendarId: calendar.googleCalendarId,
+      googleEventId: event.googleEventId,
+      notify,
+    })
   }
-
-  await deleteGoogleEvent({
-    calendarId: calendar.id,
-    googleCalendarId: calendar.googleCalendarId,
-    googleEventId: event.googleEventId,
-    notify,
-  })
 
   await prisma.event.delete({ where: { id: eventId } })
   revalidatePath(`/admin/${slug}`)
