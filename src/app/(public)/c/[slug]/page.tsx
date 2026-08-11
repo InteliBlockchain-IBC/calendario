@@ -22,7 +22,7 @@ export default async function CalendarPage({ params }: { params: Promise<{ slug:
     <main className="mx-auto max-w-3xl space-y-6 p-6">
       <h1 className="text-2xl font-semibold">{calendar.name}</h1>
       <CalendarView
-        events={events.map(toPublicEvent)}
+        events={events.map((event) => toPublicEvent(event, calendar))}
         timezone={calendar.timezone}
         slug={slug}
       />

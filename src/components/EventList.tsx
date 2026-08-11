@@ -42,6 +42,18 @@ export function EventList({
                   {event.allDay ? 'Dia inteiro' : time.format(start)}
                   {event.location && ` · ${event.location}`}
                 </p>
+                {event.label && (
+                  <span
+                    className="mt-1 inline-flex items-center gap-1.5 rounded-full bg-neutral-100 px-2 py-0.5 text-xs"
+                  >
+                    <span
+                      aria-hidden
+                      className="size-2 rounded-full"
+                      style={{ backgroundColor: event.color }}
+                    />
+                    {event.label.name}
+                  </span>
+                )}
               </div>
             </Link>
           </li>

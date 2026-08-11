@@ -1,6 +1,6 @@
 import { prisma } from '@/lib/db'
 import { loadCalendarBySlug } from '@/lib/public/load-calendar'
-import { toPublicEvent, publicEventSelect } from '@/lib/public/serialize'
+import { toPublicEvent, parseLabelParam, publicEventSelect } from '@/lib/public/serialize'
 import { CalendarView } from '@/components/CalendarView'
 
 export default async function EmbedPage({
@@ -8,11 +8,12 @@ export default async function EmbedPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>
-  searchParams: Promise<{ view?: string; area?: string }>
+  searchParams: Promise<{ view?: string; label?: string }>
 }) {
   const { slug } = await params
-  const { view } = await searchParams
+  const { view, label: labelParam } = await searchParams
   const calendar = await loadCalendarBySlug(slug)
+  const label = parseLabelParam(labelParam)
 
   const events = await prisma.event.findMany({
     where: {
@@ -20,6 +21,7 @@ export default async function EmbedPage({
       isPublic: true,
       status: 'CONFIRMED',
       endsAt: { gte: new Date() },
+      ...(label ? { label: { is: { name: { equals: label, mode: 'insensitive' } } } } : {}),
     },
     orderBy: { startsAt: 'asc' },
     select: publicEventSelect,
@@ -28,7 +30,7 @@ export default async function EmbedPage({
   return (
     <div className="p-3">
       <CalendarView
-        events={events.map(toPublicEvent)}
+        events={events.map((event) => toPublicEvent(event, calendar))}
         timezone={calendar.timezone}
         slug={slug}
         initialView={view === 'mes' ? 'mes' : 'lista'}

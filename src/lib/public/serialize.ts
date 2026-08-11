@@ -1,4 +1,5 @@
 import type { Prisma } from '@prisma/client'
+import { eventColor } from '@/lib/labels/color'
 
 /**
  * `select` único para toda consulta pública de evento. `attendees` e a
@@ -19,6 +20,8 @@ export const publicEventSelect = {
   signupUrl: true,
   status: true,
   isPublic: true,
+  colorOverride: true,
+  label: { select: { name: true, color: true } },
 } satisfies Prisma.EventSelect
 
 /** Formato exato que sai de `prisma.event.findMany({ select: publicEventSelect })`. */
@@ -39,9 +42,15 @@ export type PublicEvent = {
   location: string | null
   imageUrl: string | null
   signupUrl: string | null
+  label: { name: string; color: string } | null
+  /** Cor já resolvida pela cascata — o cliente não precisa conhecer a regra. */
+  color: string
 }
 
-export function toPublicEvent(event: PublicEventSource): PublicEvent {
+export function toPublicEvent(
+  event: PublicEventSource,
+  calendar: { accentColor: string },
+): PublicEvent {
   return {
     id: event.id,
     title: event.publicTitle ?? event.title,
@@ -54,5 +63,17 @@ export function toPublicEvent(event: PublicEventSource): PublicEvent {
     location: event.location,
     imageUrl: event.imageUrl,
     signupUrl: event.signupUrl,
+    label: event.label,
+    color: eventColor(event, calendar),
   }
+}
+
+/**
+ * `?label=` de rota pública vem de query string — texto arbitrário. Normaliza
+ * para comparar com o nome da label sem depender de caixa ou espaço; valor
+ * vazio vira "sem filtro" em vez de filtro que não casa com nada.
+ */
+export function parseLabelParam(value: string | null | undefined): string | undefined {
+  const trimmed = value?.trim().toLowerCase()
+  return trimmed ? trimmed : undefined
 }

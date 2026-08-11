@@ -17,7 +17,7 @@ export default async function EventPage({
   })
   if (!row) notFound()
 
-  const event = toPublicEvent(row)
+  const event = toPublicEvent(row, calendar)
   const formatter = new Intl.DateTimeFormat('pt-BR', {
     dateStyle: 'full',
     timeStyle: event.allDay ? undefined : 'short',

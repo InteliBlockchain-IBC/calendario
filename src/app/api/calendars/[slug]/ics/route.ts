@@ -17,7 +17,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     name: calendar.name,
     slug: calendar.slug,
     baseUrl: process.env.NEXT_PUBLIC_APP_URL ?? '',
-    events: events.map(toPublicEvent),
+    events: events.map((event) => toPublicEvent(event, calendar)),
   })
 
   return new Response(ics, {

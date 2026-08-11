@@ -5,7 +5,10 @@ import type { Event } from '@prisma/client'
 
 const SECRET_EMAIL = 'membro.secreto@sou.inteli.edu.br'
 
-function eventWithAttendees(): Event {
+// A fixture usa o modelo `Event` bruto do Prisma (que tem `labelId`, não a
+// relação carregada); intersecta com `label` só para poder passar por
+// `toPublicEvent`, que espera o formato de `publicEventSelect`.
+function eventWithAttendees(): Event & { label: { name: string; color: string } | null } {
   return {
     id: 'evt-1',
     calendarId: 'cal-1',
@@ -27,6 +30,7 @@ function eventWithAttendees(): Event {
     imageUrl: null,
     labelId: null,
     colorOverride: null,
+    label: null,
     signupUrl: null,
     createdAt: new Date(),
     updatedAt: new Date(),
@@ -36,7 +40,7 @@ function eventWithAttendees(): Event {
 
 describe('privacidade das saídas públicas', () => {
   it('o JSON público de um evento com convidados não contém nenhum e-mail', () => {
-    const serialized = JSON.stringify(toPublicEvent(eventWithAttendees()))
+    const serialized = JSON.stringify(toPublicEvent(eventWithAttendees(), { accentColor: '#0F172A' }))
 
     expect(serialized).not.toContain(SECRET_EMAIL)
     expect(serialized).not.toContain('@')
@@ -44,7 +48,7 @@ describe('privacidade das saídas públicas', () => {
   })
 
   it('o JSON público não expõe a descrição interna do Google', () => {
-    const result = toPublicEvent(eventWithAttendees())
+    const result = toPublicEvent(eventWithAttendees(), { accentColor: '#0F172A' })
 
     expect(result.description).toBe('Venha participar')
     expect(JSON.stringify(result)).not.toContain('meet.google.com')
@@ -55,7 +59,7 @@ describe('privacidade das saídas públicas', () => {
       name: 'Inteli Blockchain',
       slug: 'ibc',
       baseUrl: 'https://calendario.exemplo.org',
-      events: [toPublicEvent(eventWithAttendees())],
+      events: [toPublicEvent(eventWithAttendees(), { accentColor: '#0F172A' })],
     })
 
     expect(ics).not.toContain('ATTENDEE')
@@ -68,7 +72,7 @@ describe('privacidade das saídas públicas', () => {
       name: 'Inteli Blockchain',
       slug: 'ibc',
       baseUrl: 'https://calendario.exemplo.org',
-      events: [toPublicEvent(eventWithAttendees())],
+      events: [toPublicEvent(eventWithAttendees(), { accentColor: '#0F172A' })],
     })
 
     expect(ics).toContain('BEGIN:VCALENDAR')
