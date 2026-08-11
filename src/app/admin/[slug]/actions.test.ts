@@ -28,11 +28,12 @@ vi.mock('@/lib/db', () => ({
       delete: vi.fn(),
       findFirstOrThrow: vi.fn(),
     },
+    label: { findFirstOrThrow: vi.fn() },
     contact: { createMany: vi.fn() },
   },
 }))
 
-import { createEvent, updateGoogleFields, deleteEvent } from './actions'
+import { createEvent, updateGoogleFields, deleteEvent, updatePublicFields } from './actions'
 import { prisma } from '@/lib/db'
 import {
   createGoogleEvent,
@@ -191,5 +192,51 @@ describe('deleteEvent', () => {
     expect(prisma.event.findFirstOrThrow).toHaveBeenCalledWith({
       where: { id: 'evt-1', calendarId: 'cal-1' },
     })
+  })
+})
+
+describe('updatePublicFields', () => {
+  const publicFields = {
+    publicTitle: 'Título público',
+    publicDescription: null,
+    imageUrl: null,
+    labelId: null,
+    colorOverride: null,
+    signupUrl: null,
+  }
+
+  it("colorOverride '' vira null no que é gravado", async () => {
+    await updatePublicFields('ibc', 'evt-1', { ...publicFields, colorOverride: '   ' })
+
+    const { data } = vi.mocked(prisma.event.update).mock.calls[0][0]
+    expect(data.colorOverride).toBeNull()
+  })
+
+  it('colorOverride hex inválido lança e não grava', async () => {
+    await expect(
+      updatePublicFields('ibc', 'evt-1', { ...publicFields, colorOverride: 'não-é-hex' }),
+    ).rejects.toThrow('Cor inválida.')
+
+    expect(prisma.event.update).not.toHaveBeenCalled()
+  })
+
+  it('colorOverride hex válido passa e é gravado como veio', async () => {
+    await updatePublicFields('ibc', 'evt-1', { ...publicFields, colorOverride: '#FF00AA' })
+
+    const { data } = vi.mocked(prisma.event.update).mock.calls[0][0]
+    expect(data.colorOverride).toBe('#FF00AA')
+  })
+
+  it('labelId de outro calendário lança', async () => {
+    vi.mocked(prisma.label.findFirstOrThrow).mockRejectedValue(new Error('Not found'))
+
+    await expect(
+      updatePublicFields('ibc', 'evt-1', { ...publicFields, labelId: 'label-de-outro-cal' }),
+    ).rejects.toThrow()
+
+    expect(prisma.label.findFirstOrThrow).toHaveBeenCalledWith({
+      where: { id: 'label-de-outro-cal', calendarId: 'cal-1' },
+    })
+    expect(prisma.event.update).not.toHaveBeenCalled()
   })
 })

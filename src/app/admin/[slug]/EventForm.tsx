@@ -53,7 +53,7 @@ export function EventForm({
       setOpen(false)
     } catch (e) {
       // O evento não foi criado em lugar nenhum: se o Google falha, a action
-      // lança antes de gravar no banco (§6.1).
+      // lança antes de gravar no banco (ARCHITECTURE.md §8.1).
       setError(e instanceof Error ? e.message : 'Falha ao criar o evento.')
     } finally {
       setSaving(false)
@@ -104,7 +104,8 @@ export function EventForm({
       {/* Convite é um mecanismo do Google: sem conexão não há como
           notificar, então o campo some em vez de prometer algo que não
           acontece. Ligado por padrão ao CRIAR: criar sem avisar torna o
-          convite inútil. Ao editar, o padrão é desligado (§6.7). */}
+          convite inútil. Ao editar, o padrão é desligado
+          (ARCHITECTURE.md §8.1). */}
       {isConnected && (
         <label className="flex items-center gap-2 text-sm">
           <input name="notify" type="checkbox" defaultChecked /> Notificar convidados por e-mail

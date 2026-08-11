@@ -44,13 +44,16 @@ export async function updatePublicFields(slug: string, eventId: string, fields: 
 
   // colorOverride vai para um `style` inline na saída pública — aceitar
   // string arbitrária ali é injeção de CSS (ver isValidHex em palette.ts).
-  if (fields.colorOverride && !isValidHex(fields.colorOverride)) {
+  // '' é falsy mas não é nullish: sem normalizar, escaparia da validação e
+  // venceria a cascata de cor (color.ts) como backgroundColor vazio.
+  const colorOverride = fields.colorOverride?.trim() || null
+  if (colorOverride && !isValidHex(colorOverride)) {
     throw new Error('Cor inválida.')
   }
 
   await prisma.event.update({
     where: { id: eventId, calendarId: calendar.id },
-    data: fields,
+    data: { ...fields, colorOverride },
   })
 
   revalidatePath(`/admin/${slug}`)

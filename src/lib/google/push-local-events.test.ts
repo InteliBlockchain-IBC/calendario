@@ -58,11 +58,12 @@ describe('pushEvents', () => {
     expect(save).not.toHaveBeenCalledWith('b', expect.anything())
   })
 
-  it('save falhando depois de um push bem-sucedido conta failed e o lote continua', async () => {
+  it('save falhando depois de um push bem-sucedido conta failed e loga o órfão', async () => {
     const push = vi.fn(async (e: LocalEvent) => `g-${e.id}`)
     const save = vi.fn(async (eventId: string) => {
       if (eventId === 'b') throw new Error('banco indisponível')
     })
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
 
     const result = await pushEvents(
       [localEvent('a'), localEvent('b'), localEvent('c')],
@@ -77,6 +78,15 @@ describe('pushEvents', () => {
     expect(save).toHaveBeenCalledWith('a', 'g-a')
     expect(save).toHaveBeenCalledWith('b', 'g-b')
     expect(save).toHaveBeenCalledWith('c', 'g-c')
+    // {pushed, failed} sozinho não distingue disto de um `try` único
+    // envolvendo push+save (que também produziria pushed:2, failed:1): o
+    // log ÓRFÃO é a única diferença observável entre as duas implementações.
+    expect(errorSpy).toHaveBeenCalledWith(
+      expect.stringContaining('ÓRFÃO'),
+      expect.anything(),
+    )
+
+    errorSpy.mockRestore()
   })
 
   it('lista vazia não chama o Google', async () => {
