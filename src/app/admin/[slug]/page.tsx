@@ -44,21 +44,33 @@ export default async function AdminPage({ params }: { params: Promise<{ slug: st
           isConnected={Boolean(calendar.googleCalendarId)}
           timezone={calendar.timezone}
         />
-        <form
-          action={async () => {
-            'use server'
-            // A Server Action é um endpoint HTTP por si só — o check no
-            // render da página não protege a invocação direta da action,
-            // por isso repete aqui (mesmo padrão de togglePublic/deleteContact).
-            await requireCalendarAdmin(slug)
-            const { runSync } = await import('@/lib/sync/run-sync')
-            await runSync(calendar.id, 'full')
-          }}
-        >
-          <button type="submit" className="rounded-lg border px-4 py-2">
-            Sincronizar agora
-          </button>
-        </form>
+        {calendar.googleCalendarId ? (
+          <form
+            action={async () => {
+              'use server'
+              // A Server Action é um endpoint HTTP por si só — o check no
+              // render da página não protege a invocação direta da action,
+              // por isso repete aqui (mesmo padrão de togglePublic/deleteContact).
+              const { calendar } = await requireCalendarAdmin(slug)
+              // Guarda contra a mesma invocação direta: o botão só existe
+              // quando conectado, mas a action ainda pode ser chamada sem
+              // passar pela tela — sem isso, runSync lança um erro que a
+              // Server Action não trata e a exceção sobe crua até a tela
+              // genérica de erro em vez de uma mensagem de verdade.
+              if (!calendar.googleCalendarId) return
+              const { runSync } = await import('@/lib/sync/run-sync')
+              await runSync(calendar.id, 'full')
+            }}
+          >
+            <button type="submit" className="rounded-lg border px-4 py-2">
+              Sincronizar agora
+            </button>
+          </form>
+        ) : (
+          <a href={`/admin/${slug}/conectar`} className="text-sm underline opacity-60">
+            conectar agenda do Google para sincronizar
+          </a>
+        )}
       </div>
 
       {calendar.lastSyncError && (

@@ -2,7 +2,7 @@ import { redirect } from 'next/navigation'
 import { randomBytes } from 'node:crypto'
 import { cookies } from 'next/headers'
 import { requireCalendarAdmin } from '@/lib/auth/guard'
-import { buildOAuthClient, CALENDAR_SCOPE } from '@/lib/google/oauth'
+import { buildOAuthClient, OAUTH_SCOPES } from '@/lib/google/oauth'
 
 export async function GET(_request: Request, { params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params
@@ -27,7 +27,7 @@ export async function GET(_request: Request, { params }: { params: Promise<{ slu
     // refresh_token, e a conexão morre em uma hora.
     access_type: 'offline',
     prompt: 'consent',
-    scope: [CALENDAR_SCOPE],
+    scope: OAUTH_SCOPES,
     state,
   })
 
