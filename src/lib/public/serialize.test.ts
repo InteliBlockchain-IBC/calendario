@@ -57,6 +57,7 @@ describe('toPublicEvent', () => {
     expect(serialized).not.toContain('attendees')
     expect(serialized).not.toContain('labelId')
     expect(serialized).not.toContain('isPublic')
+    expect(serialized).not.toContain('colorOverride')
   })
 })
 

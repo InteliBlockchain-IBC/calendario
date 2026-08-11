@@ -76,15 +76,39 @@ Prisma 6 + Postgres. **Sem tabelas de Auth.js** (`User`, `Account`, `Session`): 
 | `allowedDomain` | string? | restringe o domínio de e-mail aceito no login do admin; `null` = qualquer domínio |
 | `ownerEmail` | string | |
 | `status` | enum `CalendarStatus` | `ACTIVE` \| `DISABLED` — desligar sem apagar |
-| `googleCalendarId` | string? | id da agenda no Google, escolhido em `/admin/[slug]/conectar` |
+| `googleCalendarId` | string? | id da agenda no Google, escolhido em `/admin/[slug]/conectar`. `null` = calendário não conectado (§8) |
 | `syncPastDays` | int | default `90` |
 | `syncFutureDays` | int | default `365` |
 | `lastSyncedAt` | datetime? | usada para decidir obsolescência (§6) e como `updatedMin` da varredura incremental |
 | `syncingAt` | datetime? | lock de sync em andamento (§6) |
 | `lastSyncError` | string? | último erro de sync, exibido no admin |
+| `accentColor` | string, hex | default `#0F172A`. Último nível da cascata de cor de evento (§4.1) |
 | `createdAt` / `updatedAt` | datetime | |
 
-Relações: `admins` (`CalendarAdmin[]`), `googleConnection` (`GoogleConnection?`), `events` (`Event[]`), `contacts` (`Contact[]`), `contactGroups` (`ContactGroup[]`).
+Relações: `admins` (`CalendarAdmin[]`), `googleConnection` (`GoogleConnection?`), `events` (`Event[]`), `contacts` (`Contact[]`), `contactGroups` (`ContactGroup[]`), `labels` (`Label[]`).
+
+### `Label`
+
+Tabela por calendário — substitui o antigo `enum Area`, que era cravado com os departamentos do clube Inteli Blockchain e impedia qualquer outra instituição de usar a plataforma. `Label` é dado, não enum: cada calendário cria as suas.
+
+| Campo | Tipo | Nota |
+|---|---|---|
+| `id` | uuid | |
+| `calendarId` | uuid | |
+| `name` | string | único junto com `calendarId` |
+| `color` | string, hex | segundo nível da cascata de cor (§4.1) |
+
+`onDelete: SetNull` em `Event.label`: apagar uma label não apaga os eventos que a usam, só solta a referência.
+
+### 4.1 Cascata de cor
+
+Um evento não tem cor própria obrigatória — ela é resolvida em três níveis, nesta ordem (`eventColor()`, `src/lib/labels/color.ts`):
+
+```
+Event.colorOverride ?? Event.label.color ?? Calendar.accentColor
+```
+
+A resolução acontece **no servidor**, dentro de `toPublicEvent()` (`src/lib/public/serialize.ts`): a saída pública já leva a cor pronta em `PublicEvent.color: string`, nenhum consumidor (página, embed, JSON) conhece a regra ou os três campos que a compõem. `PublicEvent` também ganha `label: { name: string; color: string } | null` — a label em si (para exibir o nome e permitir filtrar por ela), separada da cor final já resolvida.
 
 ### `GoogleConnection`
 
@@ -137,7 +161,7 @@ Dois blocos de campos com donos distintos — é essa separação que faz a sinc
 
 | Campo | Tipo |
 |---|---|
-| `googleEventId` | string, único junto com `calendarId` |
+| `googleEventId` | string?, único junto com `calendarId` |
 | `title` | string |
 | `description` | text? |
 | `startsAt` | datetime (UTC) |
@@ -148,6 +172,8 @@ Dois blocos de campos com donos distintos — é essa separação que faz a sinc
 | `recurringEventId` | string? |
 | `attendees` | json — `{email, name, responseStatus}[]` |
 
+**`googleEventId` nullable é o que torna o Google opcional (§8.1).** Um evento com `googleEventId` nulo existe só na plataforma — nasceu de `createEvent` num calendário sem `googleCalendarId`, ou de um calendário que nunca foi conectado. Esse evento **nunca** volta de uma consulta ao Google, porque não existe lá. `toExistingEvents()` (`src/lib/sync/to-existing-events.ts`) descarta as linhas com `googleEventId` nulo antes de passá-las para `reconcile()`: sem esse descarte, a varredura completa (§8.3, "ausência dentro da janela = `CANCELLED`") trataria todo evento local como sumido do Google e o marcaria `CANCELLED` — ele desapareceria do site sem erro e sem log, porque do ponto de vista da reconciliação um evento local "ausente" é indistinguível de um evento apagado no Google.
+
 **Campos da plataforma** (o sync **nunca** toca):
 
 | Campo | Tipo | Nota |
@@ -156,7 +182,8 @@ Dois blocos de campos com donos distintos — é essa separação que faz a sinc
 | `publicTitle` | string? | sobrescreve `title` no site |
 | `publicDescription` | text? | sobrescreve `description` no site |
 | `imageUrl` | string? | arte do evento, servida do volume |
-| `area` | enum `Area?` | |
+| `labelId` | uuid? | FK para `Label`, `onDelete: SetNull` |
+| `colorOverride` | string, hex? | primeiro nível da cascata de cor (§4.1), vence a cor da label |
 | `signupUrl` | string? | link do botão "Inscreva-se" |
 
 Mais `calendarId`, `createdAt`, `updatedAt`, `syncedAt`.
@@ -165,9 +192,10 @@ Mais `calendarId`, `createdAt`, `updatedAt`, `syncedAt`.
 
 ## 5. Enums
 
-- **`Area`**: `EDUCATIONAL | PROJECTS | MARKETING | PEOPLE | GENERAL` — espelha as áreas do clube, mais `GENERAL`.
 - **`EventStatus`**: `CONFIRMED | CANCELLED`.
 - **`CalendarStatus`**: `ACTIVE | DISABLED`.
+
+Não há mais enum de área/departamento — `Label` (§4) é uma tabela por calendário, não um valor fixo no schema.
 
 ## 6. Rotas
 
@@ -177,14 +205,16 @@ Mais `calendarId`, `createdAt`, `updatedAt`, `syncedAt`.
 |---|---|
 | `GET /c/[slug]` | Página do calendário: grade de mês ⇄ lista. |
 | `GET /c/[slug]/e/[id]` | Página do evento (`id` = `Event.id` da plataforma, nunca `googleEventId`). |
-| `GET /embed/[slug]` | Mesma UI sem cabeçalho/rodapé, para iframe. Aceita `?view=mes\|lista` e `?area=<AREA>`. |
-| `GET /api/calendars/[slug]/events` | JSON dos eventos publicados. CORS aberto (`Access-Control-Allow-Origin: *`). Aceita `?area=<AREA>`. |
+| `GET /embed/[slug]` | Mesma UI sem cabeçalho/rodapé, para iframe. Aceita `?view=mes\|lista` e `?label=<nome>`. |
+| `GET /api/calendars/[slug]/events` | JSON dos eventos publicados. CORS aberto (`Access-Control-Allow-Origin: *`). Aceita `?label=<nome>`. |
 | `GET /api/calendars/[slug]/ics` | Feed `.ics`. |
 | `GET /api/uploads/[...path]` | Serve as imagens do volume; valida contra travessia de diretório. |
 
-Todas as quatro primeiras passam por `loadCalendarBySlug` (§7) e retornam **404** se `Calendar.status !== ACTIVE`.
+Todas as quatro primeiras passam por `loadCalendarBySlug` (§8.2) e retornam **404** se `Calendar.status !== ACTIVE`.
 
-### Admin (exige `requireCalendarAdmin`, §8)
+Filtro `?label=<nome>` (rotas de JSON e de embed): `parseLabelParam()` normaliza para minúsculas e apara espaços; a query casa por **nome** da label, case-insensitive (`label.is.name.equals`, `mode: 'insensitive'`). Valor vazio ou ausente é "sem filtro", não "sem resultado".
+
+### Admin (exige `requireCalendarAdmin`, §7)
 
 | Rota | Descrição |
 |---|---|
@@ -224,7 +254,12 @@ Admin de um calendário não é automaticamente admin de outro: a checagem é se
 
 ### 8.1 Ida — plataforma → Google (`src/app/admin/[slug]/actions.ts`, `src/lib/google/write-event.ts`)
 
-Criar, editar ou apagar evento chama a API do Google **antes** de gravar no banco:
+O Google é **opcional por calendário** (`Calendar.googleCalendarId` nulo = não conectado). Criar, editar e apagar evento ramificam de duas formas diferentes, e a diferença importa:
+
+- **Criar (`createEvent`) ramifica no calendário** — `if (calendar.googleCalendarId)`. Calendário conectado: chama `events.insert` primeiro e grava o `googleEventId` retornado. Calendário sem conexão: grava só na plataforma, com `googleEventId: null`.
+- **Editar (`updateGoogleFields`) e apagar (`deleteEvent`) ramificam no evento** — `if (event.googleEventId && calendar.googleCalendarId)`, não só no calendário. Um calendário **conectado** ainda pode conter eventos locais: um evento criado antes de a conexão existir, ou criado enquanto ela estava ausente, continua com `googleEventId` nulo até alguém rodar `pushLocalEvents` (§8.7) — editar ou apagar um evento assim não deve tentar `events.patch`/`events.delete` num id que não existe no Google.
+
+Chamadas ao Google, quando acontecem:
 
 - criar → `events.insert`, guarda o `googleEventId` retornado;
 - editar campos do Google → `events.patch`;
@@ -232,7 +267,7 @@ Criar, editar ou apagar evento chama a API do Google **antes** de gravar no banc
 
 **Hoje só "criar" é alcançável pela UI do admin** (`EventForm` em `GET /admin/[slug]`). `updateGoogleEvent`/`deleteGoogleEvent` e as actions `updateGoogleFields`/`deleteEvent` que os chamam existem e são testáveis, mas nenhuma tela do admin oferece editar ou apagar um evento ainda — ver `PRODUCT.md` §6.1.
 
-**Se a chamada ao Google falhar, a exceção sobe e nada é gravado no banco** — um evento nunca existe só de um lado. Editar apenas campos da plataforma (`togglePublic`, `updatePublicFields`) nunca chama o Google.
+**Se a chamada ao Google falhar, a exceção sobe e nada é gravado no banco** — um evento nunca existe só de um lado. Editar apenas campos da plataforma (`togglePublic`, `updatePublicFields`) nunca chama o Google, com ou sem conexão.
 
 A lista de convidados vai no campo `attendees` do payload; `sendUpdates` (`'all'` ou `'none'`) decide se o Google dispara e-mail. Padrão: **ligado ao criar**, **desligado ao editar**. O checkbox "Notificar convidados por e-mail" existe hoje na tela de **criar** evento (`EventForm`); não há tela de editar para inverter o padrão nela ainda.
 
@@ -301,17 +336,26 @@ Ao final (sucesso ou erro), `runSync` sempre grava `syncingAt: null` — sucesso
 
 Função pura, sem rede nem banco — testada isoladamente em `reconcile.test.ts`.
 
+Antes de chegar em `reconcile()`, `run-sync.ts` passa as linhas do banco por `toExistingEvents()` (`src/lib/sync/to-existing-events.ts`), que **descarta todo evento com `googleEventId` nulo**. Um evento local nunca volta de uma consulta ao Google — se entrasse na lista de "existentes", a varredura completa (regra 5 abaixo) o trataria como sumido e o marcaria `CANCELLED` sem nenhum erro visível. O descarte também estreita o tipo: `ExistingEvent.googleEventId` é `string` não-nulo, então esquecê-lo vira erro de compilação, não bug silencioso em produção.
+
 1. Evento novo do Google (sem match local) entra com `isPublic = false` — nada aparece no site sem publicação deliberada.
-2. Evento existente: só os campos do Google são sobrescritos (enumerados campo a campo em `toGoogleFields`, nunca por spread, para não deixar campo da plataforma vazar). `publicTitle`, `publicDescription`, `imageUrl`, `area`, `signupUrl` sobrevivem intactos.
+2. Evento existente: só os campos do Google são sobrescritos (enumerados campo a campo em `toGoogleFields`, nunca por spread, para não deixar campo da plataforma vazar). `publicTitle`, `publicDescription`, `imageUrl`, `labelId`, `colorOverride`, `signupUrl` sobrevivem intactos.
 3. `status: cancelled` no Google → linha marcada `CANCELLED`, some do site, continua visível no admin.
 4. Evento cancelado no Google sem linha local correspondente é ignorado (nada a fazer).
-5. No modo `'full'`, toda linha local com `startsAt` dentro da janela que não veio na resposta é marcada `CANCELLED`.
+5. No modo `'full'`, toda linha local **com `googleEventId`** e `startsAt` dentro da janela que não veio na resposta é marcada `CANCELLED` — eventos locais já não chegam a este ponto (ver acima).
 
 `run-sync.ts` aplica o resultado numa única `prisma.$transaction`: criações, atualizações, cancelamentos em massa e a atualização de `Calendar.lastSyncedAt`/`syncingAt`/`lastSyncError` — tudo ou nada.
+
+### 8.7 Envio em lote de eventos locais (`pushLocalEvents`, `src/lib/google/push-local-events.ts`)
+
+Sobe para o Google todo evento da plataforma que ainda não tem `googleEventId` — o caso comum é conectar uma agenda a um calendário que já tinha eventos locais. Sequencial de propósito: o limite de taxa do Google é por usuário, e um lote paralelo de dezenas de eventos o estoura. Cada evento é tentado com `push()`/`save()` injetados (núcleo `pushEvents`, testável sem rede); uma falha individual é contada em `failed` e o lote continua. Idempotente: como só busca eventos com `googleEventId: null`, rodar de novo só toca o que ainda não subiu.
+
+**Implementada e testada (`push-local-events.test.ts`), sem nenhum caller em produção ainda** — `selectGoogleCalendar` (`src/app/admin/[slug]/conectar/actions.ts`), que grava o `googleCalendarId` escolhido, não a chama. Conectar uma agenda hoje não sobe os eventos locais existentes automaticamente.
 
 ## 9. Segurança (resumo — detalhe em `PRODUCT.md`)
 
 - `attendees` e `Contact` nunca saem em rota pública: `publicEventSelect` (`src/lib/public/serialize.ts`) é o único `select` usado nas quatro rotas públicas, e não inclui `attendees`. `PublicEvent` (o tipo de saída) não tem o campo — garantia de tipo, não só de query.
+- `publicEventSelect` inclui `colorOverride`, mas só para alimentar a cascata de cor (§4.1) dentro de `toPublicEvent()` — o campo cru nunca sai no `PublicEvent`, só a cor já resolvida (`color: string`). Coberto por teste em `serialize.test.ts`.
 - `buildIcs()` recebe `PublicEvent[]`, nunca `Event[]` — o tipo é a barreira contra vazar `ATTENDEE` no `.ics`.
 - Upload: valida `content-type` (JPG/PNG/WebP) e tamanho (5 MB); nome do arquivo sempre gerado (`randomUUID`), nunca o do cliente.
 - `/api/uploads/[...path]`: rejeita segmento com `..` ou `/`, e valida que o caminho resolvido continua dentro de `UPLOAD_DIR` — segunda barreira contra travessia de diretório, independente do nome gerado no upload.

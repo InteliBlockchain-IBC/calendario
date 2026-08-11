@@ -42,7 +42,7 @@ Conventional commits com descrição em português: `feat: adiciona feed .ics`.
 
 1. **Rode testes com `npm test`.** A máquina tem pouca RAM e o script está capado em 2 forks. `vitest` sem cap já causou OOM-kill aqui.
 2. **`Event.attendees` e `Contact` nunca saem em rota pública** — nem no JSON, nem na página do evento, nem no `.ics`. É regra de consulta e de tipo, não de renderização.
-3. **O `Event` tem dois blocos de campos com donos distintos.** O sync sobrescreve os campos do Google e **nunca** toca `isPublic`, `publicTitle`, `publicDescription`, `imageUrl`, `area`, `signupUrl`.
+3. **O `Event` tem dois blocos de campos com donos distintos.** O sync sobrescreve os campos do Google e **nunca** toca `isPublic`, `publicTitle`, `publicDescription`, `imageUrl`, `labelId`, `colorOverride`, `signupUrl`.
 4. **Evento novo vindo do Google nasce com `isPublic = false`.** Nada aparece no site sem alguém publicar.
 5. **A regra de "ausente = cancelado" vale só na varredura completa.** Aplicá-la na incremental cancela o calendário inteiro.
 6. **Toda consulta escopada por `calendarId`.** Nenhuma query global.

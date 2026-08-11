@@ -32,7 +32,7 @@ Só neutros e vermelho de alerta aparecem no código atual:
 | Texto secundário | `opacity-60` / `opacity-70` / `opacity-40` sobre o texto padrão, em vez de uma cor cinza fixa |
 | Erro / alerta (`lastSyncError`, formulário de conexão Google) | `red-300` (borda), `red-50` (fundo), `red-700`/`red-900` (texto) |
 
-Não existe classe de cor por área de evento (`EDUCATIONAL`, `PROJECTS`, `MARKETING`, `PEOPLE`, `GENERAL`) na implementação atual — ver §4.
+A cor de evento (resolvida no servidor pela cascata `colorOverride ?? label.color ?? calendar.accentColor`, ver `ARCHITECTURE.md` §4.1) só aparece hoje como o ponto colorido ao lado do nome da label na lista (§3) — ver §4.
 
 ## 3. Componentes
 
@@ -63,7 +63,7 @@ flex gap-4 rounded-xl border p-4 transition hover:bg-neutral-50
 - Bloco de data à esquerda, largura fixa (`w-14`), fundo `bg-neutral-100`, dia em destaque (`text-xl font-semibold`) e mês abreviado abaixo (`text-xs uppercase opacity-60`).
 - Título em `font-medium`.
 - Linha de horário/local em `text-sm opacity-70` (mostra "Dia inteiro" quando `allDay`).
-- Tag de área (se `event.area` estiver definido): `inline-block rounded-full bg-neutral-100 px-2 py-0.5 text-xs`, com o rótulo em português (`AREA_LABEL`). **Uma única cor neutra para todas as áreas** — não há mapeamento de cor por `Area` hoje (§4).
+- Tag de label (se `event.label` estiver definido): `inline-flex items-center gap-1.5 rounded-full bg-neutral-100 px-2 py-0.5 text-xs`, com um ponto (`size-2 rounded-full`) na cor resolvida (`event.color`, via `style={{ backgroundColor }}`) e o nome da label (`event.label.name`) ao lado. É o único lugar da UI que usa a cor da cascata — ver §4.
 
 ### Grade de mês
 
@@ -75,7 +75,7 @@ grid grid-cols-7 gap-px overflow-hidden rounded-xl border bg-neutral-200
 
 - Cabeçalho dos dias da semana: `bg-neutral-50 py-2 text-center text-xs opacity-60`.
 - Célula de dia: `min-h-20 bg-white p-1`, número do dia em `text-xs opacity-60`.
-- Evento dentro da célula: pílula truncada, sempre na mesma cor neutra, independente da área:
+- Evento dentro da célula: pílula truncada, sempre na mesma cor neutra fixa, independente da label ou da cor resolvida (§4):
   ```
   block truncate rounded bg-neutral-900 px-1 py-0.5 text-[10px] text-white
   ```
@@ -99,9 +99,11 @@ role="alert" rounded-lg border border-red-300 bg-red-50 p-4 text-sm
 
 Usado para `lastSyncError` no admin e para os erros do fluxo de conexão OAuth (`ERROS` em `conectar/page.tsx`).
 
-## 4. Cores por área — estado real
+## 4. Cor por label — estado real
 
-O spec original previa "cor do card vem da tag de área — evento sem tag usa a cor de `GENERAL`". **A implementação não fez isso**: `AREA_LABEL` mapeia `Area` só para um rótulo textual em português (Educacional, Projetos, Marketing, Pessoas, Geral); a tag visual usa sempre `bg-neutral-100` / `text-xs`, independente do valor de `area`. Se uma paleta por área for adicionada depois, o ponto de entrada é `AREA_LABEL` em `src/components/EventList.tsx` — trocar por um mapa `Area → classe de cor` e aplicar tanto na tag da lista quanto na pílula da grade de mês (`MonthGrid.tsx`). Isso deve esperar o guia de estilos do clube ser extraído em cores concretas por área (`documentos_projetos`/`design/` não define isso hoje, até onde este projeto tem acesso).
+O enum fixo `Area` (departamentos do clube) foi substituído pela tabela `Label` por calendário, com cor própria (`ARCHITECTURE.md` §4, §4.1). A cor final de um evento é resolvida no servidor (`colorOverride ?? label.color ?? calendar.accentColor`) e já chega pronta em `PublicEvent.color`.
+
+Hoje essa cor só é usada na **lista** (`EventList.tsx`): o ponto ao lado do nome da label, `style={{ backgroundColor: event.color }}`. A **grade de mês** (`MonthGrid.tsx`) ainda não usa `event.color` — a pílula do evento é sempre `bg-neutral-900`, cor fixa, para todo evento, com ou sem label. Se a grade ganhar cor por evento depois, o ponto de entrada é a pílula em `MonthGrid.tsx`, trocando a classe fixa por um `style` com `event.color` (mesmo padrão já usado em `EventList.tsx`).
 
 ## 5. O que não existe (de propósito, por ora)
 
