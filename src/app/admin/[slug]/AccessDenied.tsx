@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react'
 import Link from 'next/link'
 import { ErrorScreen, PRIMARY_BUTTON, SECONDARY_BUTTON } from '@/components/ErrorScreen'
 import { signOutAction } from '@/lib/auth/actions'
@@ -14,7 +15,7 @@ export function AccessDenied({
 }: {
   access: Extract<AdminAccess, { ok: false }>
   slug: string
-}) {
+}): ReactElement {
   const inicio = (
     <Link href="/" className={SECONDARY_BUTTON}>
       Ir para o início

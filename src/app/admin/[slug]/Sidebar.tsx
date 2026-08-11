@@ -97,7 +97,11 @@ function Panel({
       <div className="space-y-2 border-t p-3">
         {!compact && <p className="truncate text-xs opacity-60">{email}</p>}
         <form action={signOutAction.bind(null, `/login?next=/admin/${slug}`)}>
-          <button type="submit" className="w-full rounded-lg border px-2 py-1.5 text-xs">
+          <button
+            type="submit"
+            aria-label="Sair"
+            className="w-full rounded-lg border px-2 py-1.5 text-xs"
+          >
             {compact ? '⏻' : 'Sair'}
           </button>
         </form>

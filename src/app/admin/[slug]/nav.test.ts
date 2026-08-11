@@ -7,6 +7,9 @@ describe('navGroups', () => {
   it('todo href é escopado no calendário', () => {
     // Item de menu apontando para fora de /admin/<slug> levaria o admin de um
     // calendário para o de outro, ou para rota que não existe.
+    const allItems = GRUPOS.flatMap((g) => g.items)
+    expect(allItems.length).toBe(3)
+
     for (const group of GRUPOS) {
       for (const item of group.items) {
         expect(item.href === '/admin/ibc' || item.href.startsWith('/admin/ibc/')).toBe(true)

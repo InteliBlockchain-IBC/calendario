@@ -22,7 +22,7 @@ vi.mock('@/lib/db', () => ({
 
 import { checkCalendarAdmin, requireCalendarAdmin } from './guard'
 import { prisma } from '@/lib/db'
-import { notFound } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 
 const CALENDAR = {
   id: 'cal-1',
@@ -58,6 +58,13 @@ describe('checkCalendarAdmin', () => {
       email: 'alguem@gmail.com',
     })
     expect(notFound).not.toHaveBeenCalled()
+  })
+
+  it('sem sessão, redireciona para /login com o next correto', async () => {
+    session.user.email = null
+
+    await expect(checkCalendarAdmin('ibc')).rejects.toThrow('NEXT_REDIRECT')
+    expect(redirect).toHaveBeenCalledWith('/login?next=/admin/ibc')
   })
 })
 
